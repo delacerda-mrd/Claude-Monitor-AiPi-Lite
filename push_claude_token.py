@@ -5,17 +5,23 @@ Reads the Claude Code OAuth token from ~/.claude/.credentials.json,
 force-refreshes it via 'claude -p ping' if under REFRESH_MARGIN_H hours remain,
 then POSTs the fresh token to the AIPI-Lite device's config endpoint.
 
+Usage:
+    python3 push_claude_token.py                        # mDNS auto-discovery
+    python3 push_claude_token.py --url http://1.2.3.4/   # explicit IP
+    CLAUDE_METER_URL=http://1.2.3.4/ python3 push_claude_token.py
+
 Runs every 4h via systemd user timer: claude-token-push.timer
 """
 import json
+import os
 import time
 import subprocess
 import urllib.request
 import urllib.parse
 import sys
 
-CREDS_PATH      = "/home/jeremy/.claude/.credentials.json"
-DEVICE_URL      = "http://192.168.66.123/"   # DHCP reservation on the IoT LAN
+CREDS_PATH      = os.path.expanduser("~/.claude/.credentials.json")
+DEVICE_URL      = "http://claude-meter.local/"   # mDNS — override with --url or CLAUDE_METER_URL
 REFRESH_MARGIN_H = 2   # force refresh if less than this many hours remain
 
 
@@ -25,6 +31,17 @@ def load_creds():
 
 
 def main():
+    device_url = os.environ.get("CLAUDE_METER_URL", "")
+    for arg in sys.argv[1:]:
+        if arg == "--url" or arg == "-u":
+            device_url = ""
+        elif device_url == "" and not arg.startswith("-"):
+            device_url = arg
+        elif arg.startswith("--url="):
+            device_url = arg.split("=", 1)[1]
+    if not device_url:
+        device_url = DEVICE_URL
+
     try:
         info = load_creds()
     except Exception as e:
@@ -56,9 +73,9 @@ def main():
         print("ERROR: accessToken is empty", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Pushing token to {DEVICE_URL}  (expires in {remaining_h:.1f}h)")
+    print(f"Pushing token to {device_url}  (expires in {remaining_h:.1f}h)")
     data = urllib.parse.urlencode({"token": token}).encode()
-    req  = urllib.request.Request(DEVICE_URL, data=data, method="POST")
+    req  = urllib.request.Request(device_url, data=data, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
             print(f"Device responded: HTTP {resp.status}")

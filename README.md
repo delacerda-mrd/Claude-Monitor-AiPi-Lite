@@ -23,8 +23,26 @@ The OAuth token expires. `push_claude_token.py` runs on a nearby PC to push a fr
 
 1. Reads your Claude Code OAuth token from `~/.claude/.credentials.json`
 2. If fewer than 2 hours remain until expiry, forces a refresh via `claude -p ping`
-3. POSTs the fresh token to the device's config endpoint at `http://192.168.66.123/`
+3. POSTs the fresh token to the device's config endpoint via mDNS (`claude-meter.local`) or an explicit IP
 4. The device saves it to NVS and polls immediately
+
+### Find your device
+
+The device advertises itself as `claude-meter.local` via mDNS. To use this auto-discovery you need mDNS resolution working on the push PC:
+
+**Avahi (most distros):**
+```bash
+sudo apt install avahi-daemon libnss-mdns
+ping claude-meter.local    # verify
+```
+
+**systemd-resolved (systemd-based distros):**
+```bash
+sudo systemd-resolve --set-mdns=yes --interface=wlan0
+resolvectl query claude-meter.local    # verify
+```
+
+If mDNS isn't available, find the device's IP from your router's DHCP lease table or the serial monitor output, then pass it explicitly (see below).
 
 ### Setup (systemd timer)
 
@@ -63,37 +81,26 @@ systemctl --user daemon-reload
 systemctl --user enable --now claude-token-push.timer
 ```
 
+> **Note:** The service above uses mDNS auto-discovery. If you need an explicit IP instead, replace the `ExecStart` line:
+> ```
+> ExecStart=/usr/bin/python3 /usr/local/bin/push_claude_token.py --url http://<DEVICE-IP>/
+> ```
+> Or set the environment variable: `Environment=CLAUDE_METER_URL=http://<DEVICE-IP>/`
+
 ### Requirements on the PC
 
 - Python 3
 - `claude` CLI installed and authenticated (the script runs `claude -p ping` to force token refresh)
-- Network access to the device at `192.168.66.123`
+- Network access to the device (mDNS via `claude-meter.local`, or a known IP)
 
 ### Manual push
 
 ```bash
+# mDNS (auto-discovery)
 python3 push_claude_token.py
-```
 
-### Using mDNS (optional)
-
-The device registers `claude-meter.local` via mDNS. To use the hostname instead of the hardcoded IP, first set up mDNS resolution on the push PC, then flip `DEVICE_URL`.
-
-**Avahi (most distros):**
-```bash
-sudo apt install avahi-daemon libnss-mdns
-ping claude-meter.local    # verify
-```
-
-**systemd-resolved (systemd-based distros):**
-```bash
-sudo systemd-resolve --set-mdns=yes --interface=wlan0
-resolvectl query claude-meter.local    # verify
-```
-
-Once mDNS works, edit `DEVICE_URL` in the push script:
-```python
-DEVICE_URL = "http://claude-meter.local/"
+# Explicit IP
+python3 push_claude_token.py --url http://192.168.1.42/
 ```
 
 ## Hardware
@@ -108,7 +115,7 @@ DEVICE_URL = "http://claude-meter.local/"
 
 ## Web config
 
-`http://claude-meter.local/` (mDNS) or `http://192.168.66.123/` — view stats, paste a new token. POST a `token=` field to update the token directly.
+`http://claude-meter.local/` (or the device's IP) — view stats, paste a new token. POST a `token=` field to update the token directly.
 
 ## Architecture
 
