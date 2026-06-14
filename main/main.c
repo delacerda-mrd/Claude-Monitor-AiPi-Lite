@@ -135,10 +135,10 @@ static void led_set(uint8_t r, uint8_t g, uint8_t b)
     led_strip_refresh(g_led);
 }
 
-#define LED_BLUE()   led_set(0,   0,  10)
-#define LED_GREEN()  led_set(0,  10,   0)
-#define LED_AMBER()  led_set(10,  4,   0)
-#define LED_RED()    led_set(10,  0,   0)
+#define LED_BLUE()   led_set(0,   0,   1)
+#define LED_GREEN()  led_set(0,   1,   0)
+#define LED_AMBER()  led_set(1,   1,   0)
+#define LED_RED()    led_set(1,   0,   0)
 #define LED_OFF()    led_set(0,   0,   0)
 
 static void led_update_from_pct(int a, int b)
@@ -255,7 +255,7 @@ static void ui_init(void)
     /* SESSION header + pct combined */
     g_lbl_session_hdr = lv_label_create(scr);
     lv_label_set_text(g_lbl_session_hdr, "SESSION 0%");
-    lv_obj_set_style_text_color(g_lbl_session_hdr, lv_color_make(230, 230, 230), 0);
+    lv_obj_set_style_text_color(g_lbl_session_hdr, lv_color_make(0, 255, 165), 0);
     lv_obj_set_style_text_font(g_lbl_session_hdr, &lv_font_unscii_8, 0);
     lv_obj_align(g_lbl_session_hdr, LV_ALIGN_TOP_LEFT, 4, 16);
 
@@ -275,14 +275,14 @@ static void ui_init(void)
     /* SESSION reset */
     g_lbl_session_rst = lv_label_create(scr);
     lv_label_set_text(g_lbl_session_rst, "resets --");
-    lv_obj_set_style_text_color(g_lbl_session_rst, lv_color_make(140, 140, 140), 0);
+    lv_obj_set_style_text_color(g_lbl_session_rst, lv_color_make(0, 255, 165), 0);
     lv_obj_set_style_text_font(g_lbl_session_rst, &lv_font_unscii_8, 0);
     lv_obj_align(g_lbl_session_rst, LV_ALIGN_TOP_LEFT, 4, 42);
 
     /* WEEKLY header + pct combined */
     g_lbl_weekly_hdr = lv_label_create(scr);
     lv_label_set_text(g_lbl_weekly_hdr, "WEEKLY 0%");
-    lv_obj_set_style_text_color(g_lbl_weekly_hdr, lv_color_make(230, 230, 230), 0);
+    lv_obj_set_style_text_color(g_lbl_weekly_hdr, lv_color_make(0, 255, 165), 0);
     lv_obj_set_style_text_font(g_lbl_weekly_hdr, &lv_font_unscii_8, 0);
     lv_obj_align(g_lbl_weekly_hdr, LV_ALIGN_TOP_LEFT, 4, 65);
 
@@ -302,21 +302,21 @@ static void ui_init(void)
     /* WEEKLY reset */
     g_lbl_weekly_rst = lv_label_create(scr);
     lv_label_set_text(g_lbl_weekly_rst, "resets --");
-    lv_obj_set_style_text_color(g_lbl_weekly_rst, lv_color_make(140, 140, 140), 0);
+    lv_obj_set_style_text_color(g_lbl_weekly_rst, lv_color_make(0, 255, 165), 0);
     lv_obj_set_style_text_font(g_lbl_weekly_rst, &lv_font_unscii_8, 0);
     lv_obj_align(g_lbl_weekly_rst, LV_ALIGN_TOP_LEFT, 4, 91);
 
     /* status */
     g_lbl_status = lv_label_create(scr);
     lv_label_set_text(g_lbl_status, "connecting...");
-    lv_obj_set_style_text_color(g_lbl_status, lv_color_make(120, 120, 120), 0);
+    lv_obj_set_style_text_color(g_lbl_status, lv_color_make(0, 255, 165), 0);
     lv_obj_set_style_text_font(g_lbl_status, &lv_font_unscii_8, 0);
     lv_obj_align(g_lbl_status, LV_ALIGN_BOTTOM_MID, 0, -4);
 
     /* battery */
     g_lbl_battery = lv_label_create(scr);
     lv_label_set_text(g_lbl_battery, "BATT --%");
-    lv_obj_set_style_text_color(g_lbl_battery, lv_color_make(100, 100, 100), 0);
+    lv_obj_set_style_text_color(g_lbl_battery, lv_color_make(55, 75, 75), 0);
     lv_obj_set_style_text_font(g_lbl_battery, &lv_font_unscii_8, 0);
     lv_obj_align(g_lbl_battery, LV_ALIGN_BOTTOM_MID, 0, -10);
 }
@@ -620,6 +620,13 @@ static bool do_poll(void)
 static void batt_update(void)
 {
     if (!g_batt_adc || !g_lbl_battery) return;
+
+    /* Only show when on battery */
+    if (usb_serial_jtag_is_connected()) {
+        lv_obj_add_flag(g_lbl_battery, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    lv_obj_clear_flag(g_lbl_battery, LV_OBJ_FLAG_HIDDEN);
 
     int raw = 0;
     if (adc_oneshot_read(g_batt_adc, ADC_CHANNEL_1, &raw) != ESP_OK) return;
