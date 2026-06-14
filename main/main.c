@@ -188,9 +188,10 @@ static adc_oneshot_unit_handle_t g_batt_adc = NULL;
 
 static lv_color_t color_for_pct(int pct)
 {
-    if (pct >= 85) return lv_color_make(220,  40,  40);
-    if (pct >= 60) return lv_color_make(200, 120,   0);
-    return              lv_color_make( 40, 170,  40);
+    // Empirically: LVGL red→blue, green→red, blue→green on this panel
+    if (pct >= 85) return lv_color_make(  0, 255,   0);  // red on screen
+    if (pct >= 60) return lv_color_make(  0, 200, 200);  // amber on screen
+    return              lv_color_make(  0,   0, 255);  // green on screen
 }
 
 static void fmt_countdown(char *buf, size_t n, long epoch)
