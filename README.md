@@ -119,6 +119,24 @@ python3 push_claude_token.py --url http://192.168.1.42/
 | Button | GPIO 42 (active-low, force poll) |
 | Battery ADC | GPIO 1 (ADC1_CH1) |
 | Power hold | GPIO 10 |
+| ES8311 codec (I2C) | SDA=5, SCL=4 |
+| Speaker amp enable | GPIO 9 |
+| I2S audio | MCLK=6, BCLK=14, WS=12, DOUT=11 |
+
+## Audio
+
+The onboard ES8311 codec + speaker play notification tones for key events.
+
+| Event | Sound |
+|---|---|
+| Boot (Wi‑Fi + SNTP ready) | C–E–G rising arpeggio |
+| Button press | short C7 tick |
+| Token pushed via web | C–F ascending |
+| Usage crosses 60% | G–C ascending pair |
+| Usage crosses 85% | three staccato beeps |
+| API error | E–C descending |
+
+Routine poll successes are silent — only threshold crossings and errors are audible.
 
 ## Web config
 
