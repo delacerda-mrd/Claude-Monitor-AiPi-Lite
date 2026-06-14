@@ -15,7 +15,7 @@ import urllib.parse
 import sys
 
 CREDS_PATH      = "/home/jeremy/.claude/.credentials.json"
-DEVICE_URL      = "http://claude-meter.local/"   # mDNS hostname
+DEVICE_URL      = "http://192.168.66.123/"   # DHCP reservation on the IoT LAN
 REFRESH_MARGIN_H = 2   # force refresh if less than this many hours remain
 
 

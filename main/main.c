@@ -13,10 +13,10 @@
  * Architecture
  *   - Device polls api.anthropic.com every POLL_INTERVAL_S seconds over Wi-Fi
  *   - OAuth bearer token stored in NVS; seeded from secrets.h on first boot
- *   - Config web server at http://claude-meter.local/ on port 80
+ *   - Config web server at http://claude-meter.local/ or http://192.168.66.123/ on port 80
  *     GET  /  -> stats page + token paste form
  *     POST /  -> save new token to NVS, trigger immediate re-poll
- *   - push_claude_token.py on ShadowTrooper pushes token every 4h via systemd timer
+ *   - push_claude_token.py on ShadowTrooper pushes token every 4h via systemd timer to 192.168.66.123
  */
 
 #include <stdio.h>

@@ -23,7 +23,7 @@ The OAuth token expires. `push_claude_token.py` runs on a nearby PC to push a fr
 
 1. Reads your Claude Code OAuth token from `~/.claude/.credentials.json`
 2. If fewer than 2 hours remain until expiry, forces a refresh via `claude -p ping`
-3. POSTs the fresh token to `http://claude-meter.local/` (the device's config endpoint)
+3. POSTs the fresh token to the device's config endpoint at `http://192.168.66.123/`
 4. The device saves it to NVS and polls immediately
 
 ### Setup (systemd timer)
@@ -67,7 +67,7 @@ systemctl --user enable --now claude-token-push.timer
 
 - Python 3
 - `claude` CLI installed and authenticated (the script runs `claude -p ping` to force token refresh)
-- Network access to the device at `claude-meter.local` (mDNS)
+- Network access to the device at `192.168.66.123`
 
 ### Manual push
 
@@ -75,11 +75,25 @@ systemctl --user enable --now claude-token-push.timer
 python3 push_claude_token.py
 ```
 
-### Override device URL
+### Using mDNS (optional)
 
-Edit `DEVICE_URL` in the script to use an IP address instead of mDNS:
+The device registers `claude-meter.local` via mDNS. To use the hostname instead of the hardcoded IP, first set up mDNS resolution on the push PC, then flip `DEVICE_URL`.
+
+**Avahi (most distros):**
+```bash
+sudo apt install avahi-daemon libnss-mdns
+ping claude-meter.local    # verify
+```
+
+**systemd-resolved (systemd-based distros):**
+```bash
+sudo systemd-resolve --set-mdns=yes --interface=wlan0
+resolvectl query claude-meter.local    # verify
+```
+
+Once mDNS works, edit `DEVICE_URL` in the push script:
 ```python
-DEVICE_URL = "http://192.168.1.42/"
+DEVICE_URL = "http://claude-meter.local/"
 ```
 
 ## Hardware
@@ -94,7 +108,7 @@ DEVICE_URL = "http://192.168.1.42/"
 
 ## Web config
 
-`http://claude-meter.local/` — view stats, paste a new token. POST a `token=` field to update the token directly.
+`http://claude-meter.local/` (mDNS) or `http://192.168.66.123/` — view stats, paste a new token. POST a `token=` field to update the token directly.
 
 ## Architecture
 
