@@ -1,5 +1,7 @@
 # Claude Meter — AiPi-Lite
 
+![Claude Meter on AIPI-Lite](docs/aipi_cm.webp)
+
 ESP32-S3 firmware for a physical Claude usage-meter gadget. Polls the Anthropic API and displays session (5h) and weekly (7d) rate-limit utilization on a 1.44" ST7735 128×128 TFT LCD.
 
 ## Quick start
