@@ -9,7 +9,7 @@ ESP32-S3 firmware for a physical Claude usage-meter gadget. Polls the Anthropic 
 - **LED:** WS2812 addressable RGB on GPIO 46 (1 pixel)
 - **Button:** GPIO 42 active-low (force poll on press)
 - **Power hold:** GPIO 10 (keeps board alive on battery)
-- **Battery:** ADC1 channel 1 (GPIO 1) via voltage divider
+- **Battery:** ADC1 channel 1 (GPIO 1) via voltage divider. 12-bit, 11 dB attenuation. Lookup table in `batt_update()` maps raw ADC to percentage for a single-cell LiPo (3.2–4.2 V). The table was calibrated on an AIPI-Lite board; different divider resistor values or ADC reference variance will shift readings. Recalibrate by measuring battery voltage at known charge levels and adjusting the `{adc_raw, pct}` entries.
 - **USB detect:** `usb_serial_jtag_is_connected()` — SOF monitor, polled in main loop
 - **Board model:** AIPI-Lite / xuanzhi-yuanzhi-esp32s3
 
