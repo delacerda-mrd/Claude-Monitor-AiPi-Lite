@@ -122,6 +122,8 @@ python3 push_claude_token.py --url http://192.168.1.42/
 
 `http://claude-meter.local/` (or the device's IP) — view stats, paste a new token. POST a `token=` field to update the token directly.
 
+> **⚠️ Security:** The config endpoint has no authentication. Anyone on your LAN can read your usage stats or overwrite the Claude API token, which grants full access to your Claude account. On a trusted home network this is low-risk, but don't expose the device to a shared or public network.
+
 ## Architecture
 
 See [CLAUDE.md](CLAUDE.md) for detailed architecture notes.
