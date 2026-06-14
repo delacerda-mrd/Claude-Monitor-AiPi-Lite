@@ -65,4 +65,4 @@ This file is **not** committed. At first boot the token is persisted to NVS (`cf
 - LVGL uses a 1 ms tick timer (`esp_timer`) and double-buffered partial refresh (16 rows per buffer — 4 KB each).
 - Font: UNSCII 8 (pixel-perfect bitmap, no anti-aliasing — crisp on low-res ST7735).
 - Display `invert_color=false`, `set_gap(0,0)`, `swap_xy=true`, `mirror(true,false)`, 27 MHz SPI clock.
-- `push_claude_token.py` on ShadowTrooper pushes fresh token every 4h via systemd timer to `http://192.168.66.123/`.
+- `push_claude_token.py` pushes fresh tokens to the device via mDNS (`claude-meter.local`) or an explicit `--url`; uses systemd timer for 4h cadence.
