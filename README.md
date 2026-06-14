@@ -33,7 +33,12 @@ The device advertises itself as `claude-meter.local` via mDNS. To use this auto-
 **Avahi (most distros):**
 ```bash
 sudo apt install avahi-daemon libnss-mdns
-ping claude-meter.local    # verify
+# Avahi should start automatically; verify it's running:
+systemctl is-active avahi-daemon
+# If inactive or masked:
+#   sudo systemctl unmask avahi-daemon.socket
+#   sudo systemctl start avahi-daemon
+ping claude-meter.local    # final check
 ```
 
 **systemd-resolved (systemd-based distros):**
