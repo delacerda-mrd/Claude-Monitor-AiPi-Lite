@@ -6,12 +6,13 @@ force-refreshes it via 'claude -p ping' if under REFRESH_MARGIN_H hours remain,
 then POSTs the fresh token to the AIPI-Lite device's config endpoint.
 
 Usage:
-    python3 push_claude_token.py                        # mDNS auto-discovery
-    python3 push_claude_token.py --url http://1.2.3.4/   # explicit IP
+    python3 push_claude_token.py                           # mDNS auto-discovery
+    python3 push_claude_token.py --url http://1.2.3.4/      # explicit IP
     CLAUDE_METER_URL=http://1.2.3.4/ python3 push_claude_token.py
 
 Runs every 4h via systemd user timer: claude-token-push.timer
 """
+import argparse
 import json
 import os
 import time
@@ -20,30 +21,34 @@ import urllib.request
 import urllib.parse
 import sys
 
-CREDS_PATH      = os.path.expanduser("~/.claude/.credentials.json")
-DEVICE_URL      = "http://claude-meter.local/"   # mDNS — override with --url or CLAUDE_METER_URL
-REFRESH_MARGIN_H = 2   # force refresh if less than this many hours remain
+DEFAULT_DEVICE_URL = "http://claude-meter.local/"
+DEFAULT_CREDS_PATH = os.path.expanduser("~/.claude/.credentials.json")
+REFRESH_MARGIN_H   = 2   # force refresh if less than this many hours remain
 
 
-def load_creds():
-    with open(CREDS_PATH) as f:
+def load_creds(path):
+    with open(path) as f:
         return json.load(f)["claudeAiOauth"]
 
 
+def parse_args():
+    p = argparse.ArgumentParser(
+        description="Push a fresh Claude OAuth token to an AIPI-Lite device")
+    p.add_argument("--url", "-u",
+                   default=os.environ.get("CLAUDE_METER_URL", DEFAULT_DEVICE_URL),
+                   help="Device URL (default: %(default)s, env: CLAUDE_METER_URL)")
+    p.add_argument("--creds", "-c",
+                   default=DEFAULT_CREDS_PATH,
+                   help="Path to Claude credentials JSON (default: ~/.claude/.credentials.json)")
+    return p.parse_args()
+
+
 def main():
-    device_url = os.environ.get("CLAUDE_METER_URL", "")
-    for arg in sys.argv[1:]:
-        if arg == "--url" or arg == "-u":
-            device_url = ""
-        elif device_url == "" and not arg.startswith("-"):
-            device_url = arg
-        elif arg.startswith("--url="):
-            device_url = arg.split("=", 1)[1]
-    if not device_url:
-        device_url = DEVICE_URL
+    args = parse_args()
+    device_url = args.url.rstrip("/") + "/"
 
     try:
-        info = load_creds()
+        info = load_creds(args.creds)
     except Exception as e:
         print(f"ERROR: cannot read credentials: {e}", file=sys.stderr)
         sys.exit(1)
@@ -64,7 +69,7 @@ def main():
         except Exception as e:
             print(f"WARNING: refresh call failed: {e}", file=sys.stderr)
         # re-read after refresh attempt
-        info        = load_creds()
+        info        = load_creds(args.creds)
         expires_ms  = info.get("expiresAt", 0)
         remaining_h = (expires_ms - now_ms) / 3_600_000
 
