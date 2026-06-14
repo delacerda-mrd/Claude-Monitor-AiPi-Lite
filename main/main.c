@@ -615,21 +615,42 @@ static bool do_poll(void)
 }
 
 /* ------------------------------------------------------------------ */
+/* External-power detection — catches USB host + wall charger            */
+/* ------------------------------------------------------------------ */
+static int  g_prev_batt_raw    = 0;
+static bool g_on_external_power = false;
+
+static bool on_external_power(void)
+{
+    return g_on_external_power;
+}
+
+/* ------------------------------------------------------------------ */
 /* Battery reading                                                       */
 /* ------------------------------------------------------------------ */
 static void batt_update(void)
 {
     if (!g_batt_adc || !g_lbl_battery) return;
 
-    /* Only show when on battery */
-    if (usb_serial_jtag_is_connected()) {
+    int raw = 0;
+    if (adc_oneshot_read(g_batt_adc, ADC_CHANNEL_1, &raw) != ESP_OK) return;
+
+    /* Detect external power:
+     *   - USB host: SOF packets present
+     *   - Wall charger: battery voltage rising between polls, or
+     *     sitting at >= 98% (no drop) */
+    bool usb_host = usb_serial_jtag_is_connected();
+    bool charging = (g_prev_batt_raw > 0) && (raw > g_prev_batt_raw + 5);
+    bool near_max = (raw >= 1950) && (raw >= g_prev_batt_raw - 5);
+    g_on_external_power = usb_host || charging || near_max;
+    g_prev_batt_raw = raw;
+
+    /* Hide batt % when on external power */
+    if (g_on_external_power) {
         lv_obj_add_flag(g_lbl_battery, LV_OBJ_FLAG_HIDDEN);
         return;
     }
     lv_obj_clear_flag(g_lbl_battery, LV_OBJ_FLAG_HIDDEN);
-
-    int raw = 0;
-    if (adc_oneshot_read(g_batt_adc, ADC_CHANNEL_1, &raw) != ESP_OK) return;
 
     /* Lookup table from xiaozhi-esp32 AIPI-Lite: ADC → pct */
     static const int table[][2] = {
@@ -661,8 +682,8 @@ static void poll_task(void *arg)
     vTaskDelay(pdMS_TO_TICKS(500));
 
     while (1) {
-        /* Adjust backlight based on USB presence */
-        uint32_t bl_duty = usb_serial_jtag_is_connected() ? 204 : 51;
+        /* Adjust backlight based on external power */
+        uint32_t bl_duty = on_external_power() ? 204 : 51;
         ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, bl_duty);
         ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
 
