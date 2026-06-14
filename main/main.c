@@ -61,6 +61,7 @@
 #include "lvgl.h"
 
 #include "secrets.h"
+#include "audio.h"
 
 /* ------------------------------------------------------------------ */
 /* Hardware pins                                                        */
@@ -107,6 +108,7 @@ typedef struct {
 static claude_usage_t    g_usage       = {0};
 static SemaphoreHandle_t g_usage_mutex = NULL;
 static volatile bool     g_force_poll  = false;
+static volatile bool     g_beep_button = false;
 static volatile bool     g_usage_dirty = false;
 static char              g_token[TOKEN_MAX] = {0};
 
@@ -681,6 +683,9 @@ static void poll_task(void *arg)
     /* small delay to let display paint first */
     vTaskDelay(pdMS_TO_TICKS(500));
 
+    /* threshold-crossing tracking */
+    int prev_session = 0, prev_weekly = 0;
+
     while (1) {
         batt_update();
 
@@ -688,6 +693,12 @@ static void poll_task(void *arg)
         uint32_t bl_duty = on_external_power() ? 204 : 51;
         ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, bl_duty);
         ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+
+        /* button-tap feedback */
+        if (g_beep_button) {
+            g_beep_button = false;
+            audio_play_melody(MELODY_BUTTON);
+        }
 
         LED_AMBER();
         bool ok = do_poll();
@@ -697,6 +708,25 @@ static void poll_task(void *arg)
             xSemaphoreGive(g_usage_mutex);
             LED_RED();
             g_usage_dirty = true;
+            audio_play_melody(MELODY_ERROR);
+        } else {
+            /* threshold-crossing alerts */
+            xSemaphoreTake(g_usage_mutex, portMAX_DELAY);
+            int sp = g_usage.session_pct;
+            int wp = g_usage.weekly_pct;
+            xSemaphoreGive(g_usage_mutex);
+
+            int worse = (sp > wp) ? sp : wp;
+            int prev  = (prev_session > prev_weekly) ? prev_session : prev_weekly;
+
+            if (worse >= 85 && prev < 85) {
+                audio_play_melody(MELODY_THRESHOLD_85);
+            } else if (worse >= 60 && prev < 60) {
+                audio_play_melody(MELODY_THRESHOLD_60);
+            }
+
+            prev_session = sp;
+            prev_weekly  = wp;
         }
 
         /* wait POLL_INTERVAL_S, waking early on g_force_poll */
@@ -832,6 +862,7 @@ static esp_err_t cfg_post(httpd_req_t *req)
 
     nvs_save_token(decoded);
     g_force_poll = true;
+    audio_play_melody(MELODY_TOKEN_SAVED);
 
     static const char *ok_page =
         "<!DOCTYPE html><html><body style='font-family:sans-serif;"
@@ -862,7 +893,8 @@ static void config_server_start(void)
 /* ------------------------------------------------------------------ */
 static void IRAM_ATTR btn_isr_handler(void *arg)
 {
-    g_force_poll = true;
+    g_force_poll  = true;
+    g_beep_button = true;
 }
 
 static void button_init(void)
@@ -920,6 +952,11 @@ void app_main(void)
     ui_init();
     lv_task_handler();
 
+    /* Audio (ES8311 + I2S) — non-fatal if it fails */
+    if (audio_init() != ESP_OK) {
+        ESP_LOGW(TAG, "audio init failed — continuing without sound");
+    }
+
     /* Wi-Fi */
     if (!wifi_init()) {
         ESP_LOGE(TAG, "Wi-Fi failed - offline mode");
@@ -934,6 +971,9 @@ void app_main(void)
 
     /* SNTP */
     sntp_sync();
+
+    /* Boot melody — device is alive and connected */
+    audio_play_melody(MELODY_BOOT);
 
     /* mDNS */
     mdns_setup();
