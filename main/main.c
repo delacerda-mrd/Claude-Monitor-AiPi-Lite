@@ -620,6 +620,7 @@ static bool do_poll(void)
 /* External-power detection — catches USB host + wall charger            */
 /* ------------------------------------------------------------------ */
 static int  g_prev_batt_raw    = 0;
+static int  g_batt_avg         = 0;  /* exponential moving average */
 static bool g_on_external_power = false;
 
 static bool on_external_power(void)
@@ -637,15 +638,23 @@ static void batt_update(void)
     int raw = 0;
     if (adc_oneshot_read(g_batt_adc, ADC_CHANNEL_1, &raw) != ESP_OK) return;
 
+    /* Exponential moving average — smooths low-battery voltage noise
+     * that could otherwise look like a "rising" charge curve. */
+    if (g_batt_avg == 0) {
+        g_batt_avg = raw;
+    } else {
+        g_batt_avg = (g_batt_avg * 3 + raw) / 4;
+    }
+
     /* Detect external power:
      *   - USB host: SOF packets present
-     *   - Wall charger: voltage rising, or pinned at absolute max
+     *   - Wall charger: averaged voltage rising, or pinned at absolute max
      *     (a resting battery will drop >2 pts/cycle and exit) */
-    bool usb_host = usb_serial_jtag_is_connected();
-    bool charging = (g_prev_batt_raw > 0) && (raw > g_prev_batt_raw + 5);
-    bool pinned_max = (raw >= 1975) && (raw >= g_prev_batt_raw - 2);
+    bool usb_host   = usb_serial_jtag_is_connected();
+    bool charging   = (g_prev_batt_raw > 0) && (g_batt_avg > g_prev_batt_raw + 8);
+    bool pinned_max = (g_batt_avg >= 1975) && (g_batt_avg >= g_prev_batt_raw - 2);
     g_on_external_power = usb_host || charging || pinned_max;
-    g_prev_batt_raw = raw;
+    g_prev_batt_raw = g_batt_avg;
 
     /* Hide batt % when on external power */
     if (g_on_external_power) {
@@ -660,10 +669,10 @@ static void batt_update(void)
     };
     int pct = 0;
     for (int i = 0; i < 5; i++) {
-        if (raw <= table[i+1][0]) {
+        if (g_batt_avg <= table[i+1][0]) {
             int d_raw = table[i+1][0] - table[i][0];
             int d_pct = table[i+1][1] - table[i][1];
-            pct = table[i][1] + (raw - table[i][0]) * d_pct / d_raw;
+            pct = table[i][1] + (g_batt_avg - table[i][0]) * d_pct / d_raw;
             break;
         }
         pct = 100;
