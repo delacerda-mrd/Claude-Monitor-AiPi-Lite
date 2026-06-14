@@ -637,12 +637,12 @@ static void batt_update(void)
 
     /* Detect external power:
      *   - USB host: SOF packets present
-     *   - Wall charger: battery voltage rising between polls, or
-     *     sitting at >= 98% (no drop) */
+     *   - Wall charger: voltage rising, or pinned at absolute max
+     *     (a resting battery will drop >2 pts/cycle and exit) */
     bool usb_host = usb_serial_jtag_is_connected();
     bool charging = (g_prev_batt_raw > 0) && (raw > g_prev_batt_raw + 5);
-    bool near_max = (raw >= 1950) && (raw >= g_prev_batt_raw - 5);
-    g_on_external_power = usb_host || charging || near_max;
+    bool pinned_max = (raw >= 1975) && (raw >= g_prev_batt_raw - 2);
+    g_on_external_power = usb_host || charging || pinned_max;
     g_prev_batt_raw = raw;
 
     /* Hide batt % when on external power */
@@ -682,12 +682,12 @@ static void poll_task(void *arg)
     vTaskDelay(pdMS_TO_TICKS(500));
 
     while (1) {
+        batt_update();
+
         /* Adjust backlight based on external power */
         uint32_t bl_duty = on_external_power() ? 204 : 51;
         ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, bl_duty);
         ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
-
-        batt_update();
 
         LED_AMBER();
         bool ok = do_poll();
