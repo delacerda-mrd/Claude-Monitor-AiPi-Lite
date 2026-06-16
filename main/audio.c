@@ -58,7 +58,8 @@ static const char *TAG = "audio";
 /* ------------------------------------------------------------------ */
 static i2s_chan_handle_t  tx_handle;
 static i2s_chan_handle_t  rx_handle;
-static bool               tx_enabled;   /* TX starts disabled at init */
+static bool               tx_enabled;    /* TX starts disabled at init     */
+static bool               audio_active;  /* RX/MCLK + codec powered for use */
 static es8311_handle_t    es_handle;
 static int16_t            sine_table[SINE_TABLE_SIZE];
 
@@ -126,6 +127,28 @@ static const note_t melody_button[] = {
 static void pa_set(bool on)
 {
     gpio_set_level(PA_PIN, on ? 1 : 0);
+}
+
+/* Power the codec up for playback: restart MCLK (RX channel) and unmute.
+ * Idle current is wasted otherwise — the codec + MCLK would run 24/7 for
+ * sounds that play a few times an hour. Idempotent. */
+static void audio_resume(void)
+{
+    if (audio_active) return;
+    i2s_channel_enable(rx_handle);                 /* MCLK runs again */
+    if (es_handle) es8311_voice_mute(es_handle, false);
+    vTaskDelay(pdMS_TO_TICKS(5));                  /* MCLK / codec settle */
+    audio_active = true;
+}
+
+/* Power the codec back down after playback: mute and stop MCLK. Idempotent. */
+static void audio_suspend(void)
+{
+    if (!audio_active) return;
+    if (tx_enabled) { i2s_channel_disable(tx_handle); tx_enabled = false; }
+    if (es_handle) es8311_voice_mute(es_handle, true);
+    i2s_channel_disable(rx_handle);                /* MCLK stops */
+    audio_active = false;
 }
 
 /* Fill sine_table with one cycle of sin(x), scaled to AMPLITUDE */
@@ -263,10 +286,12 @@ static esp_err_t i2s_init(void)
     ESP_ERROR_CHECK(i2s_channel_init_std_mode(tx_handle, &std_cfg));
     ESP_ERROR_CHECK(i2s_channel_init_std_mode(rx_handle, &std_cfg));
 
-    /* Enable TX now but we'll disable/re-enable per tone for reliable
-     * short-burst playback (same pattern as IDF i2s_es8311 example).
-     * RX stays enabled for the ES8311 MCLK to keep running. */
+    /* TX is enabled/re-enabled per tone for reliable short-burst playback
+     * (same pattern as the IDF i2s_es8311 example). RX is enabled here so
+     * MCLK runs for the codec's init-time I2C access; audio_init() suspends
+     * it once init is done, and playback resumes it on demand. */
     ESP_ERROR_CHECK(i2s_channel_enable(rx_handle));
+    audio_active = true;
 
     ESP_LOGI(TAG, "I2S simplex TX ready");
     return ESP_OK;
@@ -305,6 +330,9 @@ esp_err_t audio_init(void)
         return ret;
     }
 
+    /* Idle until first playback — stops MCLK and mutes the codec. */
+    audio_suspend();
+
     ESP_LOGI(TAG, "audio subsystem ready");
     return ESP_OK;
 }
@@ -316,6 +344,8 @@ esp_err_t audio_init(void)
 void audio_play_tone(int freq_hz, int duration_ms)
 {
     if (!tx_handle || duration_ms <= 0 || freq_hz <= 0) return;
+
+    audio_resume();   /* ensure MCLK + codec are powered (idempotent) */
 
     int total_samples = SAMPLE_RATE * duration_ms / 1000;
     if (total_samples < 1) total_samples = 1;
@@ -402,6 +432,7 @@ void audio_play_melody(melody_type_t type)
     default: return;
     }
 
+    audio_resume();   /* power up once for the whole melody */
     for (int i = 0; i < count; i++) {
         if (notes[i].freq == REST) {
             vTaskDelay(pdMS_TO_TICKS(notes[i].dur_ms));
@@ -409,6 +440,7 @@ void audio_play_melody(melody_type_t type)
             audio_play_tone(notes[i].freq, notes[i].dur_ms);
         }
     }
+    audio_suspend();  /* back to idle — stop MCLK, mute codec */
 }
 
 /* ------------------------------------------------------------------ */
@@ -427,4 +459,5 @@ void audio_volume_cycle(void)
     /* Feedback tone — pitch rises with volume */
     int freq = (vol == 65) ? 440 : (vol == 70) ? 660 : 880;
     audio_play_tone(freq, 150);
+    audio_suspend();   /* back to idle */
 }
