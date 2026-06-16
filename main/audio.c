@@ -58,6 +58,7 @@ static const char *TAG = "audio";
 /* ------------------------------------------------------------------ */
 static i2s_chan_handle_t  tx_handle;
 static i2s_chan_handle_t  rx_handle;
+static bool               tx_enabled;   /* TX starts disabled at init */
 static es8311_handle_t    es_handle;
 static int16_t            sine_table[SINE_TABLE_SIZE];
 
@@ -359,8 +360,10 @@ void audio_play_tone(int freq_hz, int duration_ms)
 
     /* Disable TX, preload the tone data, then re-enable.
      * This ensures the DMA starts from a known state and the first
-     * sample hits the codec immediately — critical for short tones. */
-    i2s_channel_disable(tx_handle);
+     * sample hits the codec immediately — critical for short tones.
+     * Skip the disable on the very first tone (TX never enabled yet,
+     * which would otherwise log a spurious i2s_common error). */
+    if (tx_enabled) i2s_channel_disable(tx_handle);
 
     size_t preloaded = 0;
     i2s_channel_preload_data(tx_handle, stereo,
@@ -372,6 +375,7 @@ void audio_play_tone(int freq_hz, int duration_ms)
     vTaskDelay(pdMS_TO_TICKS(5));           /* PA rail settle              */
 
     i2s_channel_enable(tx_handle);
+    tx_enabled = true;
 
     /* Wait for DMA to actually play the audio before killing PA. */
     vTaskDelay(pdMS_TO_TICKS(duration_ms + 30));
