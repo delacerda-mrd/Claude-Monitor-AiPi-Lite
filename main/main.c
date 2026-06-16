@@ -667,7 +667,7 @@ static void power_eval(void)
 /* ------------------------------------------------------------------ */
 /* Screen manager — backlight + panel on/off, all from the main loop    */
 /* ------------------------------------------------------------------ */
-static bool    g_screen_on        = true;
+static volatile bool g_screen_on  = true;   /* read by the button ISR */
 static int64_t g_last_activity_us = 0;
 
 /* Set backlight duty for the current screen + power state. Gated so it
@@ -994,9 +994,15 @@ static void config_server_start(void)
 /* ------------------------------------------------------------------ */
 static void IRAM_ATTR btn_isr_handler(void *arg)
 {
+    /* When the screen is blanked, the first tap only wakes it — no forced
+     * poll or beep. Once it's on, a tap forces a poll with feedback. */
+    if (!g_screen_on) {
+        g_screen_wake = true;
+        return;
+    }
     g_force_poll  = true;
     g_beep_button = true;
-    g_screen_wake = true;
+    g_screen_wake = true;   /* also resets the idle timer */
 }
 
 static void button_init(void)
