@@ -272,29 +272,6 @@ static esp_err_t i2s_init(void)
 }
 
 /* ------------------------------------------------------------------ */
-/* Quick I2C bus scan                                                   */
-/* ------------------------------------------------------------------ */
-static void i2c_scan(void)
-{
-    ESP_LOGI(TAG, "I2C bus scan on port %d (SDA=GPIO%d SCL=GPIO%d):",
-             I2C_NUM, I2C_SDA_IO, I2C_SCL_IO);
-    int found = 0;
-    for (uint8_t addr = 1; addr < 127; addr++) {
-        i2c_cmd_handle_t cmd = i2c_cmd_link_create();
-        i2c_master_start(cmd);
-        i2c_master_write_byte(cmd, (addr << 1) | I2C_MASTER_WRITE, true);
-        i2c_master_stop(cmd);
-        esp_err_t ret = i2c_master_cmd_begin(I2C_NUM, cmd, pdMS_TO_TICKS(50));
-        i2c_cmd_link_delete(cmd);
-        if (ret == ESP_OK) {
-            ESP_LOGI(TAG, "  found device at 0x%02x", addr);
-            found++;
-        }
-    }
-    if (!found) ESP_LOGW(TAG, "  no devices found on I2C bus");
-}
-
-/* ------------------------------------------------------------------ */
 /* Public API                                                          */
 /* ------------------------------------------------------------------ */
 
@@ -321,8 +298,6 @@ esp_err_t audio_init(void)
         return ret;
     }
 
-    i2c_scan();
-
     ret = es8311_init_codec();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "ES8311 init failed: %s", esp_err_to_name(ret));
@@ -344,8 +319,9 @@ void audio_play_tone(int freq_hz, int duration_ms)
     int total_samples = SAMPLE_RATE * duration_ms / 1000;
     if (total_samples < 1) total_samples = 1;
 
-    int16_t *buf = calloc(total_samples, sizeof(int16_t));
-    if (!buf) return;
+    /* Stereo interleaved: both channels carry the same mono signal */
+    int16_t *stereo = malloc(total_samples * 2 * sizeof(int16_t));
+    if (!stereo) return;
 
     float phase_inc = (float)freq_hz / SAMPLE_RATE;
     float phase     = 0.0f;
@@ -374,7 +350,8 @@ void audio_play_tone(int freq_hz, int duration_ms)
         }
         sample = (int16_t)(sample * env);
 
-        buf[i] = sample;
+        stereo[i * 2]     = sample;
+        stereo[i * 2 + 1] = sample;
 
         phase += phase_inc;
         if (phase >= 1.0f) phase -= 1.0f;
@@ -384,14 +361,6 @@ void audio_play_tone(int freq_hz, int duration_ms)
      * This ensures the DMA starts from a known state and the first
      * sample hits the codec immediately — critical for short tones. */
     i2s_channel_disable(tx_handle);
-
-    int16_t *stereo = malloc(total_samples * 2 * sizeof(int16_t));
-    if (!stereo) { free(buf); return; }
-    for (int i = 0; i < total_samples; i++) {
-        stereo[i * 2]     = buf[i];
-        stereo[i * 2 + 1] = buf[i];
-    }
-    free(buf);
 
     size_t preloaded = 0;
     i2s_channel_preload_data(tx_handle, stereo,

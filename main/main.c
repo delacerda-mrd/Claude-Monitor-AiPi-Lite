@@ -91,6 +91,10 @@
 #define WIFI_RETRY_MAX      10
 #define LVGL_BUF_ROWS       16
 
+/* Usage thresholds (percent) shared by LED, bar color, and alert tones */
+#define USAGE_AMBER_PCT     60
+#define USAGE_RED_PCT       85
+
 static const char *TAG = "claude_meter";
 
 /* ------------------------------------------------------------------ */
@@ -141,14 +145,13 @@ static void led_set(uint8_t r, uint8_t g, uint8_t b)
 #define LED_GREEN()  led_set(0,   1,   0)
 #define LED_AMBER()  led_set(1,   1,   0)
 #define LED_RED()    led_set(1,   0,   0)
-#define LED_OFF()    led_set(0,   0,   0)
 
 static void led_update_from_pct(int a, int b)
 {
     int w = (a > b) ? a : b;
-    if      (w >= 85) LED_RED();
-    else if (w >= 60) LED_AMBER();
-    else              LED_GREEN();
+    if      (w >= USAGE_RED_PCT)   LED_RED();
+    else if (w >= USAGE_AMBER_PCT) LED_AMBER();
+    else                           LED_GREEN();
 }
 
 /* ------------------------------------------------------------------ */
@@ -191,8 +194,8 @@ static adc_oneshot_unit_handle_t g_batt_adc = NULL;
 static lv_color_t color_for_pct(int pct)
 {
     // Empirically: LVGL red→blue, green→red, blue→green on this panel
-    if (pct >= 85) return lv_color_make(  0, 255,   0);  // red on screen
-    if (pct >= 60) return lv_color_make(  0, 200, 200);  // amber on screen
+    if (pct >= USAGE_RED_PCT)   return lv_color_make(  0, 255,   0);  // red on screen
+    if (pct >= USAGE_AMBER_PCT) return lv_color_make(  0, 200, 200);  // amber on screen
     return              lv_color_make(  0,   0, 255);  // green on screen
 }
 
@@ -396,7 +399,7 @@ static void display_init(void)
     adc_oneshot_unit_init_cfg_t adc_cfg = { .unit_id = ADC_UNIT_1 };
     adc_oneshot_new_unit(&adc_cfg, &g_batt_adc);
     adc_oneshot_chan_cfg_t adc_ch = {
-        .atten    = ADC_ATTEN_DB_11,
+        .atten    = ADC_ATTEN_DB_12,
         .bitwidth = ADC_BITWIDTH_12,
     };
     adc_oneshot_config_channel(g_batt_adc, ADC_CHANNEL_1, &adc_ch);
@@ -728,9 +731,9 @@ static void poll_task(void *arg)
             int worse = (sp > wp) ? sp : wp;
             int prev  = (prev_session > prev_weekly) ? prev_session : prev_weekly;
 
-            if (worse >= 85 && prev < 85) {
+            if (worse >= USAGE_RED_PCT && prev < USAGE_RED_PCT) {
                 audio_play_melody(MELODY_THRESHOLD_85);
-            } else if (worse >= 60 && prev < 60) {
+            } else if (worse >= USAGE_AMBER_PCT && prev < USAGE_AMBER_PCT) {
                 audio_play_melody(MELODY_THRESHOLD_60);
             }
 
