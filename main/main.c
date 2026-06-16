@@ -273,8 +273,9 @@ static void ui_init(void)
     lv_obj_set_style_radius(g_bar_session, 3, LV_PART_MAIN);
     lv_obj_set_style_border_color(g_bar_session, lv_color_make(60, 60, 60), LV_PART_MAIN);
     lv_obj_set_style_border_width(g_bar_session, 1, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(g_bar_session, 1, LV_PART_MAIN);   /* inset indicator inside border */
     lv_obj_set_style_bg_color(g_bar_session, lv_color_make(40, 170, 40), LV_PART_INDICATOR);
-    lv_obj_set_style_radius(g_bar_session, 3, LV_PART_INDICATOR);
+    lv_obj_set_style_radius(g_bar_session, 2, LV_PART_INDICATOR);
     lv_obj_align(g_bar_session, LV_ALIGN_TOP_LEFT, 4, 28);
 
     /* SESSION reset */
@@ -300,8 +301,9 @@ static void ui_init(void)
     lv_obj_set_style_radius(g_bar_weekly, 3, LV_PART_MAIN);
     lv_obj_set_style_border_color(g_bar_weekly, lv_color_make(60, 60, 60), LV_PART_MAIN);
     lv_obj_set_style_border_width(g_bar_weekly, 1, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(g_bar_weekly, 1, LV_PART_MAIN);   /* inset indicator inside border */
     lv_obj_set_style_bg_color(g_bar_weekly, lv_color_make(40, 170, 40), LV_PART_INDICATOR);
-    lv_obj_set_style_radius(g_bar_weekly, 3, LV_PART_INDICATOR);
+    lv_obj_set_style_radius(g_bar_weekly, 2, LV_PART_INDICATOR);
     lv_obj_align(g_bar_weekly, LV_ALIGN_TOP_LEFT, 4, 77);
 
     /* WEEKLY reset */
