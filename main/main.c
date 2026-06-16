@@ -88,7 +88,7 @@
 #define POLL_INTERVAL_BATT_S  300   /* save radio energy on battery      */
 #define BL_DUTY_USB           204   /* backlight ~80% on external power   */
 #define BL_DUTY_BATT          38    /* backlight ~15% on battery          */
-#define SCREEN_TIMEOUT_S      180   /* blank screen after idle (battery)  */
+#define SCREEN_TIMEOUT_S      180   /* blank screen after idle (USB+batt) */
 #define NVS_NAMESPACE       "cfg"
 #define NVS_KEY_TOKEN       "token"
 #define TOKEN_MAX           512
@@ -687,6 +687,7 @@ static void screen_set(bool on)
 {
     if (on == g_screen_on) return;
     g_screen_on = on;
+    ESP_LOGI(TAG, "screen %s", on ? "on" : "off");
     if (on) {
         esp_lcd_panel_disp_on_off(g_panel, true);
         apply_backlight();                       /* light up */
@@ -696,8 +697,9 @@ static void screen_set(bool on)
     }
 }
 
-/* Run each main-loop iteration: honor wake requests, enforce the idle
- * timeout on battery, and keep the screen on whenever externally powered. */
+/* Run each main-loop iteration: honor wake requests and enforce the idle
+ * timeout. Applies on both USB and battery; only the on-brightness differs
+ * (see apply_backlight). */
 static void screen_tick(void)
 {
     int64_t now = esp_timer_get_time();
@@ -708,10 +710,8 @@ static void screen_tick(void)
         screen_set(true);
     }
 
-    if (g_on_external_power) {
-        screen_set(true);   /* never blank while externally powered */
-    } else if (g_screen_on &&
-               now - g_last_activity_us > (int64_t)SCREEN_TIMEOUT_S * 1000000) {
+    if (g_screen_on &&
+        now - g_last_activity_us > (int64_t)SCREEN_TIMEOUT_S * 1000000) {
         screen_set(false);
     }
 
