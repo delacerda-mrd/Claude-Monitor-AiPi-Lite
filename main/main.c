@@ -88,6 +88,7 @@
 #define POLL_INTERVAL_BATT_S  300   /* save radio energy on battery      */
 #define BL_DUTY_USB           204   /* backlight ~80% on external power   */
 #define BL_DUTY_BATT          38    /* backlight ~15% on battery          */
+#define SCREEN_TIMEOUT_S      180   /* blank screen after idle (battery)  */
 #define NVS_NAMESPACE       "cfg"
 #define NVS_KEY_TOKEN       "token"
 #define TOKEN_MAX           512
@@ -117,6 +118,7 @@ static SemaphoreHandle_t g_usage_mutex = NULL;
 static volatile bool     g_force_poll  = false;
 static volatile bool     g_beep_button = false;
 static volatile bool     g_usage_dirty = false;
+static volatile bool     g_screen_wake = false;  /* request to wake screen */
 static char              g_token[TOKEN_MAX] = {0};
 
 /* ------------------------------------------------------------------ */
@@ -641,7 +643,10 @@ static bool g_on_external_power = false; /* latest combined power state */
  * of waiting for the next poll.
  *
  * On battery we trade snappiness for runtime: dimmer backlight, deeper
- * Wi-Fi modem sleep, and a longer poll interval (see the poll wait loop). */
+ * Wi-Fi modem sleep, and a longer poll interval (see the poll wait loop).
+ * Backlight level + screen on/off are owned by the main loop's screen
+ * manager (which reads g_on_external_power), to keep all panel/LEDC access
+ * in one task. */
 static void power_eval(void)
 {
     static int applied = -1;   /* last applied state; -1 forces first apply */
@@ -650,10 +655,6 @@ static void power_eval(void)
     if ((int)ext == applied) return;   /* only act on transitions */
     applied = ext;
 
-    ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0,
-                  ext ? BL_DUTY_USB : BL_DUTY_BATT);
-    ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
-
     /* Snappy on USB, deeper modem sleep on battery */
     esp_wifi_set_ps(ext ? WIFI_PS_MIN_MODEM : WIFI_PS_MAX_MODEM);
 
@@ -661,6 +662,60 @@ static void power_eval(void)
         if (ext) lv_obj_add_flag(g_lbl_battery, LV_OBJ_FLAG_HIDDEN);
         else     lv_obj_clear_flag(g_lbl_battery, LV_OBJ_FLAG_HIDDEN);
     }
+}
+
+/* ------------------------------------------------------------------ */
+/* Screen manager — backlight + panel on/off, all from the main loop    */
+/* ------------------------------------------------------------------ */
+static bool    g_screen_on        = true;
+static int64_t g_last_activity_us = 0;
+
+/* Set backlight duty for the current screen + power state. Gated so it
+ * only touches the LEDC on an actual change. */
+static void apply_backlight(void)
+{
+    static int last = -1;
+    int duty = !g_screen_on ? 0
+             : (g_on_external_power ? BL_DUTY_USB : BL_DUTY_BATT);
+    if (duty == last) return;
+    last = duty;
+    ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, duty);
+    ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+}
+
+static void screen_set(bool on)
+{
+    if (on == g_screen_on) return;
+    g_screen_on = on;
+    if (on) {
+        esp_lcd_panel_disp_on_off(g_panel, true);
+        apply_backlight();                       /* light up */
+    } else {
+        apply_backlight();                       /* backlight off first */
+        esp_lcd_panel_disp_on_off(g_panel, false);
+    }
+}
+
+/* Run each main-loop iteration: honor wake requests, enforce the idle
+ * timeout on battery, and keep the screen on whenever externally powered. */
+static void screen_tick(void)
+{
+    int64_t now = esp_timer_get_time();
+
+    if (g_screen_wake) {
+        g_screen_wake = false;
+        g_last_activity_us = now;
+        screen_set(true);
+    }
+
+    if (g_on_external_power) {
+        screen_set(true);   /* never blank while externally powered */
+    } else if (g_screen_on &&
+               now - g_last_activity_us > (int64_t)SCREEN_TIMEOUT_S * 1000000) {
+        screen_set(false);
+    }
+
+    apply_backlight();      /* pick up brightness changes while on */
 }
 
 /* ------------------------------------------------------------------ */
@@ -740,6 +795,7 @@ static void poll_task(void *arg)
             xSemaphoreGive(g_usage_mutex);
             LED_RED();
             g_usage_dirty = true;
+            g_screen_wake = true;   /* show the error */
             audio_play_melody(MELODY_ERROR);
         } else {
             /* threshold-crossing alerts */
@@ -755,6 +811,11 @@ static void poll_task(void *arg)
                 audio_play_melody(MELODY_THRESHOLD_85);
             } else if (worse >= USAGE_AMBER_PCT && prev < USAGE_AMBER_PCT) {
                 audio_play_melody(MELODY_THRESHOLD_60);
+            }
+
+            /* wake the screen on any change in usage */
+            if (sp != prev_session || wp != prev_weekly) {
+                g_screen_wake = true;
             }
 
             prev_session = sp;
@@ -935,6 +996,7 @@ static void IRAM_ATTR btn_isr_handler(void *arg)
 {
     g_force_poll  = true;
     g_beep_button = true;
+    g_screen_wake = true;
 }
 
 static void button_init(void)
@@ -1028,11 +1090,13 @@ void app_main(void)
     xTaskCreate(poll_task, "poll", 8192, NULL, 5, NULL);
 
     /* Main loop */
+    g_last_activity_us = esp_timer_get_time();   /* keep screen on at boot */
     while (1) {
         lv_task_handler();
         if (g_usage_dirty) {
             ui_update();
         }
+        screen_tick();
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
