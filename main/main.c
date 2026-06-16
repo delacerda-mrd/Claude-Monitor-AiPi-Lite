@@ -84,7 +84,10 @@
 /* ------------------------------------------------------------------ */
 /* App config                                                           */
 /* ------------------------------------------------------------------ */
-#define POLL_INTERVAL_S     120
+#define POLL_INTERVAL_USB_S   120   /* snappier when externally powered */
+#define POLL_INTERVAL_BATT_S  300   /* save radio energy on battery      */
+#define BL_DUTY_USB           204   /* backlight ~80% on external power   */
+#define BL_DUTY_BATT          38    /* backlight ~15% on battery          */
 #define NVS_NAMESPACE       "cfg"
 #define NVS_KEY_TOKEN       "token"
 #define TOKEN_MAX           512
@@ -392,7 +395,7 @@ static void display_init(void)
         .speed_mode = LEDC_LOW_SPEED_MODE,
         .channel    = LEDC_CHANNEL_0,
         .timer_sel  = LEDC_TIMER_0,
-        .duty       = 51,   /* start at battery level */
+        .duty       = BL_DUTY_BATT,   /* start dim; power_eval adjusts */
         .hpoint     = 0,
     };
     ESP_ERROR_CHECK(ledc_channel_config(&bl_ch));
@@ -625,12 +628,39 @@ static bool do_poll(void)
 /* External-power detection — catches USB host + wall charger            */
 /* ------------------------------------------------------------------ */
 static int  g_prev_batt_raw    = 0;
-static int  g_batt_avg         = 0;  /* exponential moving average */
-static bool g_on_external_power = false;
+static int  g_batt_avg         = 0;     /* exponential moving average */
+static bool g_charger_trend    = false; /* wall-charger detected via voltage */
+static bool g_on_external_power = false; /* latest combined power state */
 
-static bool on_external_power(void)
+/* Apply power-dependent settings for the current power state.
+ *
+ * The USB-host signal (SOF packets) is fast and reliable, so it is sampled
+ * here and combined with the slow voltage-trend wall-charger heuristic that
+ * batt_update() maintains. This runs both per-poll and every few seconds in
+ * the wait loop so plugging/unplugging USB is reflected within ~2s instead
+ * of waiting for the next poll.
+ *
+ * On battery we trade snappiness for runtime: dimmer backlight, deeper
+ * Wi-Fi modem sleep, and a longer poll interval (see the poll wait loop). */
+static void power_eval(void)
 {
-    return g_on_external_power;
+    static int applied = -1;   /* last applied state; -1 forces first apply */
+    bool ext = usb_serial_jtag_is_connected() || g_charger_trend;
+    g_on_external_power = ext;
+    if ((int)ext == applied) return;   /* only act on transitions */
+    applied = ext;
+
+    ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0,
+                  ext ? BL_DUTY_USB : BL_DUTY_BATT);
+    ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+
+    /* Snappy on USB, deeper modem sleep on battery */
+    esp_wifi_set_ps(ext ? WIFI_PS_MIN_MODEM : WIFI_PS_MAX_MODEM);
+
+    if (g_lbl_battery) {
+        if (ext) lv_obj_add_flag(g_lbl_battery, LV_OBJ_FLAG_HIDDEN);
+        else     lv_obj_clear_flag(g_lbl_battery, LV_OBJ_FLAG_HIDDEN);
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -651,24 +681,16 @@ static void batt_update(void)
         g_batt_avg = (g_batt_avg * 3 + raw) / 4;
     }
 
-    /* Detect external power:
-     *   - USB host: SOF packets present
-     *   - Wall charger: averaged voltage rising, or pinned at absolute max
-     *     (a resting battery will drop >2 pts/cycle and exit) */
-    bool usb_host   = usb_serial_jtag_is_connected();
+    /* Wall-charger detection from the voltage trend (the fast USB-host
+     * signal is handled in power_eval): averaged voltage rising, or pinned
+     * at absolute max (a resting battery drops >2 pts/cycle and exits). */
     bool charging   = (g_prev_batt_raw > 0) && (g_batt_avg > g_prev_batt_raw + 8);
     bool pinned_max = (g_batt_avg >= 1975) && (g_batt_avg >= g_prev_batt_raw - 2);
-    g_on_external_power = usb_host || charging || pinned_max;
+    g_charger_trend = charging || pinned_max;
     g_prev_batt_raw = g_batt_avg;
 
-    /* Hide batt % when on external power */
-    if (g_on_external_power) {
-        lv_obj_add_flag(g_lbl_battery, LV_OBJ_FLAG_HIDDEN);
-        return;
-    }
-    lv_obj_clear_flag(g_lbl_battery, LV_OBJ_FLAG_HIDDEN);
-
-    /* Lookup table from xiaozhi-esp32 AIPI-Lite: ADC → pct */
+    /* Lookup table from xiaozhi-esp32 AIPI-Lite: ADC → pct (label shown
+     * only on battery — power_eval toggles its visibility) */
     static const int table[][2] = {
         {1480, 0}, {1581, 20}, {1663, 40}, {1750, 60}, {1840, 80}, {1980,100}
     };
@@ -702,11 +724,7 @@ static void poll_task(void *arg)
 
     while (1) {
         batt_update();
-
-        /* Adjust backlight based on external power */
-        uint32_t bl_duty = on_external_power() ? 204 : 51;
-        ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, bl_duty);
-        ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+        power_eval();   /* backlight + batt-label visibility */
 
         /* button-tap feedback */
         if (g_beep_button) {
@@ -743,13 +761,21 @@ static void poll_task(void *arg)
             prev_weekly  = wp;
         }
 
-        /* wait POLL_INTERVAL_S, waking early on g_force_poll */
-        for (int i = 0; i < POLL_INTERVAL_S * 10; i++) {
+        /* Wait the poll interval (longer on battery), waking early on
+         * g_force_poll. Re-check power state every ~2s so USB plug/unplug
+         * is reflected quickly, and so the interval adapts mid-wait. */
+        int waited = 0;
+        for (;;) {
             vTaskDelay(pdMS_TO_TICKS(100));
+            waited++;
             if (g_force_poll) {
                 g_force_poll = false;
                 break;
             }
+            if (waited % 20 == 0) power_eval();
+            int limit = (g_on_external_power ? POLL_INTERVAL_USB_S
+                                             : POLL_INTERVAL_BATT_S) * 10;
+            if (waited >= limit) break;
         }
     }
 }

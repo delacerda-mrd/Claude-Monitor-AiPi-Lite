@@ -54,12 +54,12 @@ This file is **not** committed. At first boot the token is persisted to NVS (`cf
 3. **LVGL UI** — two bars (SESSION and WEEKLY) with percentage labels and countdown-to-reset text. Bar color: green (<60%), amber (<85%), red (≥85%). Battery percentage at bottom. ERR label only shown on error.
 4. **Config web server** — HTTP on port 80 at `http://claude-meter.local/`. Shows stats + token paste form. POST saves to NVS and triggers immediate re-poll.
 5. **LED** — dimmed values: blue at boot, then green/amber/red matching the worse of the two usage percentages. Red on API error.
-6. **Backlight** — LEDC PWM on GPIO 3, 5 kHz, 8-bit. 80% on USB, 20% on battery. Adjusts in poll loop via USB detect.
-7. **Power** — ESP-PM at 40–160 MHz, light sleep disabled (kills SPI bus).
+6. **Backlight** — LEDC PWM on GPIO 3, 5 kHz, 8-bit. ~80% on USB, ~15% on battery (`BL_DUTY_USB`/`BL_DUTY_BATT`). Set in `power_eval()`, re-evaluated every ~2 s.
+7. **Power** — ESP-PM at 40–160 MHz, light sleep disabled (kills SPI bus). `power_eval()` applies battery-saving settings on transitions: dimmer backlight, `WIFI_PS_MAX_MODEM` (vs `MIN_MODEM` on USB), and a longer poll interval. Audio (ES8311 + MCLK) is suspended when idle and resumed only for playback.
 
 ## Key constraints
 
-- Anthropic API call uses a real token and **counts against rate limits** (1 token/poll). Poll interval: 120 s.
+- Anthropic API call uses a real token and **counts against rate limits** (1 token/poll). Poll interval: 120 s on USB (`POLL_INTERVAL_USB_S`), 300 s on battery (`POLL_INTERVAL_BATT_S`).
 - Token is OAuth bearer from `~/.claude/.credentials.json` field `claudeAiOauth.accessToken`. Requires `anthropic-beta: oauth-2025-04-20` header.
 - Token stored as raw string in NVS; web form URL-decodes form-encoded POST bodies.
 - LVGL uses a 1 ms tick timer (`esp_timer`) and double-buffered partial refresh (16 rows per buffer — 4 KB each).
