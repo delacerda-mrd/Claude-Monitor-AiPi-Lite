@@ -24,9 +24,12 @@ The OAuth token expires. `push_claude_token.py` runs on a nearby PC to push a fr
 ### How it works
 
 1. Reads your Claude Code OAuth token from `~/.claude/.credentials.json`
-2. If fewer than 2 hours remain until expiry, forces a refresh via `claude -p ping`
-3. POSTs the fresh token to the device's config endpoint via mDNS (`claude-meter.local`) or an explicit IP
-4. The device saves it to NVS and polls immediately
+2. If fewer than `--margin` hours remain until expiry (default 6), forces a refresh via `claude -p ping`, re-reads, and **refuses to push a token that is still expired** — so a transient refresh failure never poisons the device with a dead token
+3. POSTs the fresh token to the device, trying mDNS (`claude-meter.local`) first and **falling back to a cached/explicit IP with retries** — a flaky mDNS lookup no longer loses a whole cycle
+4. Caches the device's resolved IP (`~/.cache/claude-meter-ip`) after a successful hostname push, so the fallback self-heals across DHCP changes
+5. The device saves the token to NVS and polls immediately
+
+Exit codes: `0` ok · `1` config/credentials error · `2` token not fresh (not pushed) · `3` push failed.
 
 ### Find your device
 
@@ -54,21 +57,24 @@ If mDNS isn't available, find the device's IP from your router's DHCP lease tabl
 ### Setup (systemd timer)
 
 ```bash
-# Copy script
-sudo cp push_claude_token.py /usr/local/bin/
-sudo chmod +x /usr/local/bin/push_claude_token.py
+# Install the script to a stable path
+mkdir -p ~/scripts
+cp push_claude_token.py ~/scripts/
+chmod +x ~/scripts/push_claude_token.py
 
 # Create systemd user service
 mkdir -p ~/.config/systemd/user
 cat > ~/.config/systemd/user/claude-token-push.service << 'EOF'
 [Unit]
-Description=Push Claude OAuth token to AiPi-Lite device
+Description=Push Claude OAuth token to Claude Meter
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/python3 /usr/local/bin/push_claude_token.py
+# claude lives in a per-user dir — make sure the unit can find it.
+Environment=CLAUDE_BIN=%h/.local/bin/claude
+ExecStart=/usr/bin/python3 %h/scripts/push_claude_token.py
 EOF
 
 cat > ~/.config/systemd/user/claude-token-push.timer << 'EOF'
@@ -76,7 +82,8 @@ cat > ~/.config/systemd/user/claude-token-push.timer << 'EOF'
 Description=Push Claude token every 4 hours
 
 [Timer]
-OnCalendar=*-*-* 00/4:00:00
+OnBootSec=2min
+OnUnitActiveSec=4h
 Persistent=true
 
 [Install]
@@ -88,11 +95,10 @@ systemctl --user daemon-reload
 systemctl --user enable --now claude-token-push.timer
 ```
 
-> **Note:** The service above uses mDNS auto-discovery. If you need an explicit IP instead, replace the `ExecStart` line:
-> ```
-> ExecStart=/usr/bin/python3 /usr/local/bin/push_claude_token.py --url http://<DEVICE-IP>/
-> ```
-> Or set the environment variable: `Environment=CLAUDE_METER_URL=http://<DEVICE-IP>/`
+> **Notes**
+> - `Environment=CLAUDE_BIN=…` matters: under `systemctl --user` the `claude` CLI (installed in `~/.local/...`) may not be on `PATH`, which is what silently broke refreshes before.
+> - The script uses mDNS by default and auto-falls-back to the cached device IP, so you usually need nothing else. For a hard guarantee, give the device a DHCP reservation and add `--ip <DEVICE-IP>` (or `Environment=CLAUDE_METER_IP=<DEVICE-IP>`) to `ExecStart`.
+> - If the device requires auth (see *Web config*), add `--secret <SECRET>` or `Environment=CLAUDE_METER_SECRET=<SECRET>`.
 
 ### Requirements on the PC
 
@@ -103,11 +109,13 @@ systemctl --user enable --now claude-token-push.timer
 ### Manual push
 
 ```bash
-# mDNS (auto-discovery)
-python3 push_claude_token.py
+# mDNS (auto-discovery), with an IP fallback for when mDNS is flaky
+python3 push_claude_token.py --ip 192.168.1.42
 
-# Explicit IP
+# Explicit URL only
 python3 push_claude_token.py --url http://192.168.1.42/
+
+# Other flags: --secret <s>  --margin <hours>  --retries <n>  --creds <path>
 ```
 
 ## Hardware
@@ -140,9 +148,34 @@ Routine poll successes are silent — only threshold crossings and errors are au
 
 ## Web config
 
-`http://claude-meter.local/` (or the device's IP) — view stats, paste a new token. POST a `token=` field to update the token directly.
+`http://claude-meter.local/` (or the device's IP) — view stats (now including the running firmware version + active OTA slot), paste a new token. POST a `token=` field to update the token directly.
 
-> **⚠️ Security:** The config endpoint has no authentication. Anyone on your LAN can read your usage stats or overwrite the Claude API token, which grants full access to your Claude account. On a trusted home network this is low-risk, but don't expose the device to a shared or public network.
+### Optional auth
+
+Define `CFG_AUTH_SECRET` in `main/secrets.h` to require an `X-Auth: <secret>` header on the mutating endpoints (token update and OTA). When unset, they stay open (legacy behavior). The push script passes it via `--secret` / `CLAUDE_METER_SECRET`.
+
+> **⚠️ Security:** Without `CFG_AUTH_SECRET`, the config endpoint has no authentication — anyone on your LAN can read your usage stats or overwrite the Claude API token (which grants full access to your Claude account). On a trusted home network this is low-risk; set a secret or don't expose the device to a shared/public network.
+
+## Firmware update (OTA)
+
+The device runs from a two-slot OTA partition layout (16 MB flash), so after the first USB flash you can update over Wi-Fi — no cable:
+
+```bash
+idf.py build
+curl --data-binary @build/claude_meter_v2.bin \
+     -H 'X-Auth: <secret-if-set>' \
+     http://claude-meter.local/ota
+```
+
+The device streams the image into the inactive slot, verifies it, flips the boot partition, and reboots. The stats page shows the new version + slot + OTA state (`fw <ver> · ota_N · valid`) to confirm.
+
+> The first flash after switching to the OTA layout **must be over USB** (`idf.py flash`) — it rewrites the partition table. NVS keeps its offset, so a token already saved on the device survives.
+
+### Auto-rollback
+
+Rollback is enabled (`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`). An OTA image boots in `pending` state; once it runs stably for ~15 s in the online main loop it self-confirms (`esp_ota_mark_app_valid_cancel_rollback`) and the stats page shows `valid`. If a bad image crashes/hangs before confirming, the **next reset reverts to the previous working slot** automatically. The Wi-Fi-failure path deliberately does *not* confirm, so an update that breaks networking also rolls back on the next power cycle.
+
+> Because rollback support lives in the **bootloader**, enabling it requires one USB flash (OTA updates the app only, not the bootloader). After that, OTA updates are rollback-protected. A USB flash is never subject to rollback (it's the recovery path).
 
 ## Architecture
 

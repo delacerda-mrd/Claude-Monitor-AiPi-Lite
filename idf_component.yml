@@ -1,11 +1,16 @@
+## NOTE: the component manifest that actually drives the build lives in
+## main/idf_component.yml. This top-level file is kept only in sync with it
+## to avoid confusion; edit main/idf_component.yml for real changes.
 dependencies:
-  espressif/esp_lcd_st7735:
-    version: "^1.0.0"
+  teriyakigod/esp_lcd_st7735:
+    version: "^0.0.1"
   lvgl/lvgl:
     version: "^8.4.0"
   espressif/led_strip:
     version: "^3.0.3"
   espressif/mdns:
     version: "^1.11.1"
+  espressif/es8311:
+    version: "^1.0.0"
   idf:
     version: ">=5.0.0"
