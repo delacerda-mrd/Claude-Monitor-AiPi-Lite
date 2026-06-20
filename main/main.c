@@ -886,6 +886,10 @@ static void poll_task(void *arg)
             g_usage_dirty = true;
             g_screen_wake = true;   /* show the error */
             audio_play_melody(MELODY_ERROR);
+            /* if token expired/rejected, notify host to push a fresh one */
+            if (res == POLL_AUTH) {
+                notify_host_online();
+            }
         } else {
             /* threshold-crossing alerts */
             xSemaphoreTake(g_usage_mutex, portMAX_DELAY);
