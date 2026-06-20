@@ -39,6 +39,8 @@
 #include "nvs_flash.h"
 #include "nvs.h"
 #include "esp_pm.h"
+#include "esp_ota_ops.h"
+#include "esp_app_desc.h"
 
 #include "driver/spi_master.h"
 #include "driver/gpio.h"
@@ -89,6 +91,7 @@
 #define BL_DUTY_USB           204   /* backlight ~80% on external power   */
 #define BL_DUTY_BATT          38    /* backlight ~15% on battery          */
 #define SCREEN_TIMEOUT_S      180   /* blank screen after idle (USB+batt) */
+#define OTA_SELFTEST_S        15    /* run this long before confirming an OTA image */
 #define NVS_NAMESPACE       "cfg"
 #define NVS_KEY_TOKEN       "token"
 #define TOKEN_MAX           512
@@ -99,26 +102,37 @@
 #define USAGE_AMBER_PCT     60
 #define USAGE_RED_PCT       85
 
+#ifndef MIN
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+#endif
+
 static const char *TAG = "claude_meter";
 
 /* ------------------------------------------------------------------ */
 /* Shared usage state                                                   */
 /* ------------------------------------------------------------------ */
+/* Result of a poll attempt — lets the UI tell "fix your token" apart from
+ * a transient network/API failure. */
+typedef enum { POLL_OK = 0, POLL_AUTH, POLL_NET } poll_result_t;
+
 typedef struct {
-    int  session_pct;
-    long session_reset_epoch;
-    int  weekly_pct;
-    long weekly_reset_epoch;
-    char status[24];
-    bool ok;
+    int           session_pct;
+    long          session_reset_epoch;
+    int           weekly_pct;
+    long          weekly_reset_epoch;
+    char          status[24];
+    bool          ok;
+    poll_result_t err_kind;   /* valid when !ok */
 } claude_usage_t;
 
 static claude_usage_t    g_usage       = {0};
-static SemaphoreHandle_t g_usage_mutex = NULL;
+static SemaphoreHandle_t g_usage_mutex = NULL;   /* guards g_usage AND g_token */
 static volatile bool     g_force_poll  = false;
 static volatile bool     g_beep_button = false;
 static volatile bool     g_usage_dirty = false;
 static volatile bool     g_screen_wake = false;  /* request to wake screen */
+static volatile int      g_batt_pct    = -1;     /* latest sampled %, rendered by main loop */
+static volatile bool     g_on_external_power = false; /* USB host or wall charger */
 static char              g_token[TOKEN_MAX] = {0};
 
 /* ------------------------------------------------------------------ */
@@ -245,15 +259,43 @@ static void ui_update(void)
     fmt_countdown(tmp, sizeof(tmp), u.weekly_reset_epoch);
     lv_label_set_text(g_lbl_weekly_rst, tmp);
 
-    /* status — only visible on error */
+    /* status — only visible on error; distinguish a rejected token from a
+     * transient network/API failure so the user knows to push a fresh token */
     if (!u.ok) {
-        lv_label_set_text(g_lbl_status, "ERR");
+        lv_label_set_text(g_lbl_status,
+                          u.err_kind == POLL_AUTH ? "TOKEN?" : "ERR");
         lv_obj_clear_flag(g_lbl_status, LV_OBJ_FLAG_HIDDEN);
     } else {
         lv_obj_add_flag(g_lbl_status, LV_OBJ_FLAG_HIDDEN);
     }
 
     g_usage_dirty = false;
+}
+
+/* Render the battery label. LVGL 8 is single-threaded, so all label access
+ * must come from the main loop — batt_update() (poll task) only samples the
+ * percentage into g_batt_pct; this turns it into pixels. Visibility tracks
+ * the power source; gated so it only touches LVGL on an actual change. */
+static void ui_render_battery(void)
+{
+    static int last_ext = -1;
+    static int last_pct = -2;
+    if (!g_lbl_battery) return;
+
+    int ext = g_on_external_power ? 1 : 0;
+    if (ext != last_ext) {
+        last_ext = ext;
+        if (ext) lv_obj_add_flag(g_lbl_battery, LV_OBJ_FLAG_HIDDEN);
+        else     lv_obj_clear_flag(g_lbl_battery, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    int pct = g_batt_pct;
+    if (!ext && pct != last_pct) {
+        last_pct = pct;
+        char buf[16];
+        snprintf(buf, sizeof(buf), "BATT %d%%", pct);
+        lv_label_set_text(g_lbl_battery, buf);
+    }
 }
 
 static void ui_init(void)
@@ -440,6 +482,42 @@ static EventGroupHandle_t g_wifi_eg;
 #define WIFI_FAILED_BIT     BIT1
 static int g_wifi_retries = 0;
 
+static void notify_host_online_task(void *arg)
+{
+    char *host = (char *)arg;
+    esp_http_client_config_t cfg = {
+        .url = host,
+        .timeout_ms = 5000,
+    };
+    esp_http_client_handle_t client = esp_http_client_init(&cfg);
+    if (!client) {
+        ESP_LOGW(TAG, "Failed to init HTTP client for host notify");
+        free(host);
+        vTaskDelete(NULL);
+        return;
+    }
+    esp_err_t err = esp_http_client_perform(client);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Host notify failed: %s", esp_err_to_name(err));
+    } else {
+        int code = esp_http_client_get_status_code(client);
+        ESP_LOGI(TAG, "Host notified: HTTP %d", code);
+    }
+    esp_http_client_cleanup(client);
+    free(host);
+    vTaskDelete(NULL);
+}
+
+static void notify_host_online(void)
+{
+    char host_url[256];
+    snprintf(host_url, sizeof(host_url), "http://shadowtrooper.local:5555/notify");
+    char *url_copy = malloc(strlen(host_url) + 1);
+    if (!url_copy) return;
+    strcpy(url_copy, host_url);
+    xTaskCreate(notify_host_online_task, "notify_host", 4096, url_copy, 2, NULL);
+}
+
 static void wifi_event_handler(void *arg, esp_event_base_t base,
                                int32_t id, void *data)
 {
@@ -458,6 +536,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t base,
         ESP_LOGI(TAG, "IP: " IPSTR, IP2STR(&ev->ip_info.ip));
         g_wifi_retries = 0;
         xEventGroupSetBits(g_wifi_eg, WIFI_CONNECTED_BIT);
+        notify_host_online();
     }
 }
 
@@ -561,10 +640,18 @@ static esp_err_t http_evt_handler(esp_http_client_event_t *evt)
     return ESP_OK;
 }
 
-static bool do_poll(void)
+static poll_result_t do_poll(void)
 {
+    /* Snapshot the token under the mutex — it can be rewritten concurrently
+     * by the config server's POST handler (nvs_save_token). */
+    char token[TOKEN_MAX];
+    xSemaphoreTake(g_usage_mutex, portMAX_DELAY);
+    strncpy(token, g_token, sizeof(token) - 1);
+    token[sizeof(token) - 1] = '\0';
+    xSemaphoreGive(g_usage_mutex);
+
     char auth[TOKEN_MAX + 16];
-    snprintf(auth, sizeof(auth), "Bearer %s", g_token);
+    snprintf(auth, sizeof(auth), "Bearer %s", token);
 
     static const char body[] =
         "{\"model\":\"claude-haiku-4-5\","
@@ -584,7 +671,7 @@ static bool do_poll(void)
         .keep_alive_enable = false,
     };
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
-    if (!client) return false;
+    if (!client) return POLL_NET;
 
     esp_http_client_set_header(client, "Content-Type",    "application/json");
     esp_http_client_set_header(client, "Authorization",   auth);
@@ -598,15 +685,19 @@ static bool do_poll(void)
 
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "HTTP error: %s", esp_err_to_name(err));
-        return false;
+        return POLL_NET;
+    }
+    if (code == 401 || code == 403) {
+        ESP_LOGE(TAG, "HTTP %d - token rejected", code);
+        return POLL_AUTH;
     }
     if (code != 200 && code != 429) {
         ESP_LOGE(TAG, "HTTP %d", code);
-        return false;
+        return POLL_NET;
     }
     if (!ctx.got_5h || !ctx.got_7d) {
         ESP_LOGE(TAG, "Missing unified headers (HTTP %d) - token may be stale", code);
-        return false;
+        return POLL_AUTH;
     }
 
     xSemaphoreTake(g_usage_mutex, portMAX_DELAY);
@@ -615,7 +706,8 @@ static bool do_poll(void)
     g_usage.weekly_pct          = ctx.weekly_pct;
     g_usage.weekly_reset_epoch  = ctx.weekly_reset;
     strncpy(g_usage.status, ctx.status, sizeof(g_usage.status) - 1);
-    g_usage.ok = true;
+    g_usage.ok       = true;
+    g_usage.err_kind = POLL_OK;
     xSemaphoreGive(g_usage_mutex);
 
     ESP_LOGI(TAG, "session=%d%% weekly=%d%% status=%s",
@@ -623,7 +715,7 @@ static bool do_poll(void)
 
     led_update_from_pct(ctx.session_pct, ctx.weekly_pct);
     g_usage_dirty = true;
-    return true;
+    return POLL_OK;
 }
 
 /* ------------------------------------------------------------------ */
@@ -632,7 +724,7 @@ static bool do_poll(void)
 static int  g_prev_batt_raw    = 0;
 static int  g_batt_avg         = 0;     /* exponential moving average */
 static bool g_charger_trend    = false; /* wall-charger detected via voltage */
-static bool g_on_external_power = false; /* latest combined power state */
+/* g_on_external_power lives in the globals section (read by the main loop) */
 
 /* Apply power-dependent settings for the current power state.
  *
@@ -655,13 +747,10 @@ static void power_eval(void)
     if ((int)ext == applied) return;   /* only act on transitions */
     applied = ext;
 
-    /* Snappy on USB, deeper modem sleep on battery */
+    /* Snappy on USB, deeper modem sleep on battery.
+     * The battery-label visibility is handled by ui_render_battery() on the
+     * main loop (LVGL is single-threaded; this runs on the poll task). */
     esp_wifi_set_ps(ext ? WIFI_PS_MIN_MODEM : WIFI_PS_MAX_MODEM);
-
-    if (g_lbl_battery) {
-        if (ext) lv_obj_add_flag(g_lbl_battery, LV_OBJ_FLAG_HIDDEN);
-        else     lv_obj_clear_flag(g_lbl_battery, LV_OBJ_FLAG_HIDDEN);
-    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -723,7 +812,7 @@ static void screen_tick(void)
 /* ------------------------------------------------------------------ */
 static void batt_update(void)
 {
-    if (!g_batt_adc || !g_lbl_battery) return;
+    if (!g_batt_adc) return;
 
     int raw = 0;
     if (adc_oneshot_read(g_batt_adc, ADC_CHANNEL_1, &raw) != ESP_OK) return;
@@ -760,9 +849,8 @@ static void batt_update(void)
         pct = 100;
     }
 
-    char buf[16];
-    snprintf(buf, sizeof(buf), "BATT %d%%", pct);
-    lv_label_set_text(g_lbl_battery, buf);
+    /* Hand the value to the main loop; ui_render_battery() draws it. */
+    g_batt_pct = pct;
 }
 
 /* ------------------------------------------------------------------ */
@@ -788,10 +876,11 @@ static void poll_task(void *arg)
         }
 
         LED_AMBER();
-        bool ok = do_poll();
-        if (!ok) {
+        poll_result_t res = do_poll();
+        if (res != POLL_OK) {
             xSemaphoreTake(g_usage_mutex, portMAX_DELAY);
-            g_usage.ok = false;
+            g_usage.ok       = false;
+            g_usage.err_kind = res;
             xSemaphoreGive(g_usage_mutex);
             LED_RED();
             g_usage_dirty = true;
@@ -872,7 +961,11 @@ static void nvs_save_token(const char *tok)
     nvs_set_str(h, NVS_KEY_TOKEN, tok);
     nvs_commit(h);
     nvs_close(h);
+    /* g_token is read by the poll task; guard the swap. */
+    xSemaphoreTake(g_usage_mutex, portMAX_DELAY);
     strncpy(g_token, tok, TOKEN_MAX - 1);
+    g_token[TOKEN_MAX - 1] = '\0';
+    xSemaphoreGive(g_usage_mutex);
     ESP_LOGI(TAG, "Token saved to NVS (%u chars)", (unsigned)strlen(tok));
 }
 
@@ -901,6 +994,77 @@ static void url_decode(char *dst, const char *src, size_t maxlen)
 /* ------------------------------------------------------------------ */
 /* Config HTTP server                                                    */
 /* ------------------------------------------------------------------ */
+
+/* Optional shared-secret auth on mutating endpoints (POST / and /ota).
+ * Define CFG_AUTH_SECRET in secrets.h to require an "X-Auth: <secret>"
+ * header. Left undefined, the endpoints are open (legacy behavior). */
+static bool auth_ok(httpd_req_t *req)
+{
+#ifdef CFG_AUTH_SECRET
+    char hdr[96];
+    if (httpd_req_get_hdr_value_str(req, "X-Auth", hdr, sizeof(hdr)) != ESP_OK)
+        return false;
+    return strcmp(hdr, CFG_AUTH_SECRET) == 0;
+#else
+    (void)req;
+    return true;
+#endif
+}
+
+/* Locate the value of an x-www-form-urlencoded field by exact name.
+ * Returns a pointer into `body` at the start of the (still-encoded) value,
+ * and writes its length (up to the next '&' or end) to *out_len. */
+static const char *form_field(const char *body, const char *name, size_t *out_len)
+{
+    size_t nl = strlen(name);
+    const char *p = body;
+    while (p && *p) {
+        if (strncmp(p, name, nl) == 0 && p[nl] == '=') {
+            const char *v   = p + nl + 1;
+            const char *amp = strchr(v, '&');
+            *out_len = amp ? (size_t)(amp - v) : strlen(v);
+            return v;
+        }
+        p = strchr(p, '&');
+        if (p) p++;
+    }
+    return NULL;
+}
+
+/* Short, human-readable OTA state of the running slot (shown on the stats
+ * page so the rollback handshake is verifiable over HTTP). */
+static const char *ota_state_str(void)
+{
+    const esp_partition_t *run = esp_ota_get_running_partition();
+    esp_ota_img_states_t st;
+    if (esp_ota_get_state_partition(run, &st) != ESP_OK) return "?";
+    switch (st) {
+        case ESP_OTA_IMG_NEW:            return "new";
+        case ESP_OTA_IMG_PENDING_VERIFY: return "pending";
+        case ESP_OTA_IMG_VALID:          return "valid";
+        case ESP_OTA_IMG_INVALID:        return "invalid";
+        case ESP_OTA_IMG_ABORTED:        return "aborted";
+        default:                         return "ok";   /* UNDEFINED: e.g. USB-flashed */
+    }
+}
+
+/* Confirm the running image so the bootloader won't roll it back. Only acts
+ * while the slot is PENDING_VERIFY (an OTA image on its trial boot); a no-op
+ * for normal/USB-flashed images. Called once the device has run long enough
+ * to prove the image isn't crash-looping (see the main loop). */
+static void ota_confirm_image(void)
+{
+    const esp_partition_t *run = esp_ota_get_running_partition();
+    esp_ota_img_states_t st;
+    if (esp_ota_get_state_partition(run, &st) != ESP_OK) return;
+    if (st != ESP_OTA_IMG_PENDING_VERIFY) return;
+
+    if (esp_ota_mark_app_valid_cancel_rollback() == ESP_OK)
+        ESP_LOGW(TAG, "OTA image on %s confirmed valid — rollback cancelled", run->label);
+    else
+        ESP_LOGE(TAG, "esp_ota_mark_app_valid_cancel_rollback failed");
+}
+
 static esp_err_t cfg_get(httpd_req_t *req)
 {
     xSemaphoreTake(g_usage_mutex, portMAX_DELAY);
@@ -908,6 +1072,9 @@ static esp_err_t cfg_get(httpd_req_t *req)
     int wp = g_usage.weekly_pct;
     bool ok = g_usage.ok;
     xSemaphoreGive(g_usage_mutex);
+
+    const esp_app_desc_t  *app = esp_app_get_description();
+    const esp_partition_t *run = esp_ota_get_running_partition();
 
     char page[2048];
     snprintf(page, sizeof(page),
@@ -925,12 +1092,14 @@ static esp_err_t cfg_get(httpd_req_t *req)
         "<h2>Claude Meter</h2>"
         "<p>Status: <b>%s</b></p>"
         "<p>SESSION: <b>%d%%</b> &nbsp; WEEKLY: <b>%d%%</b></p>"
+        "<p style='color:#888;font-size:12px'>fw %s &middot; %s &middot; %s</p>"
         "<form method='POST'>"
         "<label>Paste OAuth access token (from ~/.claude/.credentials.json):</label>"
-        "<textarea name='token' placeholder='eyJhbGci...'></textarea>"
+        "<textarea name='token' placeholder='sk-ant-oat01-...'></textarea>"
         "<input type='submit' value='Save &amp; Poll'>"
         "</form></body></html>",
-        ok ? "OK" : "ERROR", sp, wp);
+        ok ? "OK" : "ERROR", sp, wp,
+        app ? app->version : "?", run ? run->label : "?", ota_state_str());
 
     httpd_resp_set_type(req, "text/html");
     return httpd_resp_send(req, page, HTTPD_RESP_USE_STRLEN);
@@ -938,23 +1107,47 @@ static esp_err_t cfg_get(httpd_req_t *req)
 
 static esp_err_t cfg_post(httpd_req_t *req)
 {
-    char body[TOKEN_MAX + 32];
-    int  len = httpd_req_recv(req, body, sizeof(body) - 1);
-    if (len <= 0) {
+    if (!auth_ok(req)) {
+        httpd_resp_send_err(req, HTTPD_401_UNAUTHORIZED, "Auth required");
+        return ESP_FAIL;
+    }
+
+    /* Read the whole body — httpd_req_recv may return short counts, so loop
+     * until content_len (or the buffer) is satisfied. */
+    char body[TOKEN_MAX + 64];
+    int  total = 0;
+    while (total < (int)sizeof(body) - 1) {
+        int r = httpd_req_recv(req, body + total, sizeof(body) - 1 - total);
+        if (r == HTTPD_SOCK_ERR_TIMEOUT) continue;
+        if (r < 0) {
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "recv error");
+            return ESP_FAIL;
+        }
+        if (r == 0) break;
+        total += r;
+        if (req->content_len && total >= (int)req->content_len) break;
+    }
+    if (total <= 0) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Empty");
         return ESP_FAIL;
     }
-    body[len] = '\0';
+    body[total] = '\0';
 
-    char *val = strstr(body, "token=");
+    size_t vlen = 0;
+    const char *val = form_field(body, "token", &vlen);
     if (!val) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No token field");
         return ESP_FAIL;
     }
-    val += 6;
+
+    /* Copy just this field's value, then URL-decode it. */
+    char enc[TOKEN_MAX];
+    if (vlen >= sizeof(enc)) vlen = sizeof(enc) - 1;
+    memcpy(enc, val, vlen);
+    enc[vlen] = '\0';
 
     char decoded[TOKEN_MAX];
-    url_decode(decoded, val, sizeof(decoded));
+    url_decode(decoded, enc, sizeof(decoded));
 
     if (strlen(decoded) < 20) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Token too short");
@@ -974,19 +1167,81 @@ static esp_err_t cfg_post(httpd_req_t *req)
     return httpd_resp_send(req, ok_page, HTTPD_RESP_USE_STRLEN);
 }
 
+/* OTA firmware upload: stream the raw .bin body straight into the inactive
+ * OTA slot, then flip the boot partition and reboot. No multipart framing —
+ * push with e.g.  curl --data-binary @build/claude_meter_v2.bin \
+ *                      -H 'X-Auth: <secret>' http://claude-meter.local/ota */
+static esp_err_t ota_post(httpd_req_t *req)
+{
+    if (!auth_ok(req)) {
+        httpd_resp_send_err(req, HTTPD_401_UNAUTHORIZED, "Auth required");
+        return ESP_FAIL;
+    }
+
+    const esp_partition_t *part = esp_ota_get_next_update_partition(NULL);
+    if (!part) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "No OTA partition");
+        return ESP_FAIL;
+    }
+    ESP_LOGI(TAG, "OTA: receiving %d bytes -> %s",
+             req->content_len, part->label);
+
+    esp_ota_handle_t ota = 0;
+    if (esp_ota_begin(part, OTA_WITH_SEQUENTIAL_WRITES, &ota) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "ota_begin failed");
+        return ESP_FAIL;
+    }
+
+    static char buf[1024];   /* httpd handlers are serialized -> static is safe */
+    int remaining = req->content_len;
+    while (remaining > 0) {
+        int r = httpd_req_recv(req, buf, MIN(remaining, (int)sizeof(buf)));
+        if (r == HTTPD_SOCK_ERR_TIMEOUT) continue;
+        if (r <= 0) {
+            esp_ota_abort(ota);
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "recv error");
+            return ESP_FAIL;
+        }
+        if (esp_ota_write(ota, buf, r) != ESP_OK) {
+            esp_ota_abort(ota);
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "flash write failed");
+            return ESP_FAIL;
+        }
+        remaining -= r;
+    }
+
+    if (esp_ota_end(ota) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "image invalid");
+        return ESP_FAIL;
+    }
+    if (esp_ota_set_boot_partition(part) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "set_boot failed");
+        return ESP_FAIL;
+    }
+
+    httpd_resp_sendstr(req, "OTA OK — rebooting\n");
+    ESP_LOGW(TAG, "OTA complete, booting %s", part->label);
+    vTaskDelay(pdMS_TO_TICKS(500));
+    esp_restart();
+    return ESP_OK;
+}
+
 static void config_server_start(void)
 {
     httpd_config_t cfg  = HTTPD_DEFAULT_CONFIG();
     cfg.server_port     = 80;
     cfg.stack_size      = 8192;
+    cfg.lru_purge_enable = true;
     httpd_handle_t srv  = NULL;
     ESP_ERROR_CHECK(httpd_start(&srv, &cfg));
 
-    static const httpd_uri_t get_uri  = {"/", HTTP_GET,  cfg_get,  NULL};
-    static const httpd_uri_t post_uri = {"/", HTTP_POST, cfg_post, NULL};
+    static const httpd_uri_t get_uri  = {"/",    HTTP_GET,  cfg_get,  NULL};
+    static const httpd_uri_t post_uri = {"/",    HTTP_POST, cfg_post, NULL};
+    static const httpd_uri_t ota_uri  = {"/ota", HTTP_POST, ota_post, NULL};
     httpd_register_uri_handler(srv, &get_uri);
     httpd_register_uri_handler(srv, &post_uri);
-    ESP_LOGI(TAG, "Config server on :80");
+    httpd_register_uri_handler(srv, &ota_uri);
+    ESP_LOGI(TAG, "Config server on :80 (GET / POST / /ota)");
 }
 
 /* ------------------------------------------------------------------ */
@@ -1070,6 +1325,10 @@ void app_main(void)
         ESP_LOGE(TAG, "Wi-Fi failed - offline mode");
         lv_label_set_text(g_lbl_status, "no wifi");
         LED_RED();
+        /* Deliberately do NOT confirm the OTA image here: if a bad update
+         * breaks Wi-Fi, leaving the slot PENDING_VERIFY means the next reset
+         * auto-rolls-back to the last working image. An image is only trusted
+         * once it reaches the online main loop. */
         /* spin LVGL only */
         while (1) {
             lv_task_handler();
@@ -1096,13 +1355,27 @@ void app_main(void)
     xTaskCreate(poll_task, "poll", 8192, NULL, 5, NULL);
 
     /* Main loop */
-    g_last_activity_us = esp_timer_get_time();   /* keep screen on at boot */
+    g_last_activity_us  = esp_timer_get_time();   /* keep screen on at boot */
+    int64_t loop_start  = esp_timer_get_time();
+    bool    ota_checked = false;
     while (1) {
         lv_task_handler();
         if (g_usage_dirty) {
             ui_update();
         }
+        ui_render_battery();
         screen_tick();
+
+        /* Auto-rollback handshake: once we've reached the main loop and run
+         * stably for OTA_SELFTEST_S, the image clearly boots — confirm it so
+         * the bootloader keeps it. A crash/hang before this point leaves the
+         * slot PENDING_VERIFY, and the next reset rolls back automatically. */
+        if (!ota_checked &&
+            esp_timer_get_time() - loop_start > (int64_t)OTA_SELFTEST_S * 1000000) {
+            ota_confirm_image();
+            ota_checked = true;
+        }
+
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
