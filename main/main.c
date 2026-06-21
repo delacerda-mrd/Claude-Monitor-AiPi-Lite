@@ -493,8 +493,6 @@ static EventGroupHandle_t g_wifi_eg;
 static int g_wifi_retries = 0;
 static bool g_wifi_ever_connected = false;
 
-static volatile bool g_notify_pending = false;
-
 static void notify_host_online_task(void *arg)
 {
     char *host = (char *)arg;
@@ -506,7 +504,6 @@ static void notify_host_online_task(void *arg)
     if (!client) {
         ESP_LOGW(TAG, "Failed to init HTTP client for host notify");
         free(host);
-        g_notify_pending = false;
         vTaskDelete(NULL);
         return;
     }
@@ -519,15 +516,11 @@ static void notify_host_online_task(void *arg)
     }
     esp_http_client_cleanup(client);
     free(host);
-    g_notify_pending = false;
     vTaskDelete(NULL);
 }
 
 static void notify_host_online(void)
 {
-    if (g_notify_pending) return;
-    g_notify_pending = true;
-
     char host_url[256];
     snprintf(host_url, sizeof(host_url), "http://shadowtrooper.local:5555/notify");
     char *url_copy = malloc(strlen(host_url) + 1);
@@ -905,11 +898,10 @@ static void poll_task(void *arg)
             led_set_pending(1, 0, 0);
             g_usage_dirty = true;
             g_screen_wake = true;   /* show the error */
-            audio_play_melody(MELODY_ERROR);
-            /* if token expired/rejected, notify host to push a fresh one */
             if (res == POLL_AUTH) {
                 notify_host_online();
             }
+            audio_play_melody(MELODY_ERROR);
         } else {
             /* threshold-crossing alerts */
             xSemaphoreTake(g_usage_mutex, portMAX_DELAY);
