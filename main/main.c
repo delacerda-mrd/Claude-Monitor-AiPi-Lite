@@ -493,6 +493,8 @@ static EventGroupHandle_t g_wifi_eg;
 static int g_wifi_retries = 0;
 static bool g_wifi_ever_connected = false;
 
+static volatile bool g_notify_pending = false;
+
 static void notify_host_online_task(void *arg)
 {
     char *host = (char *)arg;
@@ -504,6 +506,7 @@ static void notify_host_online_task(void *arg)
     if (!client) {
         ESP_LOGW(TAG, "Failed to init HTTP client for host notify");
         free(host);
+        g_notify_pending = false;
         vTaskDelete(NULL);
         return;
     }
@@ -516,15 +519,14 @@ static void notify_host_online_task(void *arg)
     }
     esp_http_client_cleanup(client);
     free(host);
+    g_notify_pending = false;
     vTaskDelete(NULL);
 }
 
 static void notify_host_online(void)
 {
-    static int64_t last_notify_us = 0;
-    int64_t now = esp_timer_get_time();
-    if (now - last_notify_us < 300000000LL) return;
-    last_notify_us = now;
+    if (g_notify_pending) return;
+    g_notify_pending = true;
 
     char host_url[256];
     snprintf(host_url, sizeof(host_url), "http://shadowtrooper.local:5555/notify");
