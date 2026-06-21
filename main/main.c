@@ -139,6 +139,8 @@ static char              g_token[TOKEN_MAX] = {0};
 /* LED  (WS2812, 1 pixel)                                              */
 /* ------------------------------------------------------------------ */
 static led_strip_handle_t g_led = NULL;
+static volatile uint8_t g_led_pending_r = 0, g_led_pending_g = 0, g_led_pending_b = 1;
+static volatile bool g_led_dirty = false;
 
 static void led_init(void)
 {
@@ -165,12 +167,20 @@ static void led_set(uint8_t r, uint8_t g, uint8_t b)
 #define LED_AMBER()  led_set(1,   1,   0)
 #define LED_RED()    led_set(1,   0,   0)
 
+static void led_set_pending(uint8_t r, uint8_t g, uint8_t b)
+{
+    g_led_pending_r = r;
+    g_led_pending_g = g;
+    g_led_pending_b = b;
+    g_led_dirty = true;
+}
+
 static void led_update_from_pct(int a, int b)
 {
     int w = (a > b) ? a : b;
-    if      (w >= USAGE_RED_PCT)   LED_RED();
-    else if (w >= USAGE_AMBER_PCT) LED_AMBER();
-    else                           LED_GREEN();
+    if      (w >= USAGE_RED_PCT)   led_set_pending(1, 0, 0);
+    else if (w >= USAGE_AMBER_PCT) led_set_pending(1, 1, 0);
+    else                           led_set_pending(0, 1, 0);
 }
 
 /* ------------------------------------------------------------------ */
@@ -481,6 +491,7 @@ static EventGroupHandle_t g_wifi_eg;
 #define WIFI_CONNECTED_BIT  BIT0
 #define WIFI_FAILED_BIT     BIT1
 static int g_wifi_retries = 0;
+static bool g_wifi_ever_connected = false;
 
 static void notify_host_online_task(void *arg)
 {
@@ -510,6 +521,11 @@ static void notify_host_online_task(void *arg)
 
 static void notify_host_online(void)
 {
+    static int64_t last_notify_us = 0;
+    int64_t now = esp_timer_get_time();
+    if (now - last_notify_us < 300000000LL) return;
+    last_notify_us = now;
+
     char host_url[256];
     snprintf(host_url, sizeof(host_url), "http://shadowtrooper.local:5555/notify");
     char *url_copy = malloc(strlen(host_url) + 1);
@@ -524,10 +540,11 @@ static void wifi_event_handler(void *arg, esp_event_base_t base,
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
         esp_wifi_connect();
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
-        if (g_wifi_retries < WIFI_RETRY_MAX) {
+        if (g_wifi_ever_connected || g_wifi_retries < WIFI_RETRY_MAX) {
             esp_wifi_connect();
             g_wifi_retries++;
-            ESP_LOGW(TAG, "Wi-Fi retry %d/%d", g_wifi_retries, WIFI_RETRY_MAX);
+            ESP_LOGW(TAG, "Wi-Fi retry %d%s", g_wifi_retries,
+                     g_wifi_ever_connected ? " (reconnecting)" : "");
         } else {
             xEventGroupSetBits(g_wifi_eg, WIFI_FAILED_BIT);
         }
@@ -535,6 +552,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t base,
         ip_event_got_ip_t *ev = (ip_event_got_ip_t *)data;
         ESP_LOGI(TAG, "IP: " IPSTR, IP2STR(&ev->ip_info.ip));
         g_wifi_retries = 0;
+        g_wifi_ever_connected = true;
         xEventGroupSetBits(g_wifi_eg, WIFI_CONNECTED_BIT);
         notify_host_online();
     }
@@ -875,14 +893,14 @@ static void poll_task(void *arg)
             audio_play_melody(MELODY_BUTTON);
         }
 
-        LED_AMBER();
+        led_set_pending(1, 1, 0);
         poll_result_t res = do_poll();
         if (res != POLL_OK) {
             xSemaphoreTake(g_usage_mutex, portMAX_DELAY);
             g_usage.ok       = false;
             g_usage.err_kind = res;
             xSemaphoreGive(g_usage_mutex);
-            LED_RED();
+            led_set_pending(1, 0, 0);
             g_usage_dirty = true;
             g_screen_wake = true;   /* show the error */
             audio_play_melody(MELODY_ERROR);
@@ -962,8 +980,11 @@ static void nvs_save_token(const char *tok)
         ESP_LOGE(TAG, "NVS open failed");
         return;
     }
-    nvs_set_str(h, NVS_KEY_TOKEN, tok);
-    nvs_commit(h);
+    esp_err_t e1 = nvs_set_str(h, NVS_KEY_TOKEN, tok);
+    esp_err_t e2 = nvs_commit(h);
+    if (e1 != ESP_OK || e2 != ESP_OK)
+        ESP_LOGE(TAG, "NVS write failed: set=%s commit=%s",
+                 esp_err_to_name(e1), esp_err_to_name(e2));
     nvs_close(h);
     /* g_token is read by the poll task; guard the swap. */
     xSemaphoreTake(g_usage_mutex, portMAX_DELAY);
@@ -1182,6 +1203,11 @@ static esp_err_t ota_post(httpd_req_t *req)
         return ESP_FAIL;
     }
 
+    if (req->content_len <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Content-Length required");
+        return ESP_FAIL;
+    }
+
     const esp_partition_t *part = esp_ota_get_next_update_partition(NULL);
     if (!part) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "No OTA partition");
@@ -1234,7 +1260,7 @@ static void config_server_start(void)
 {
     httpd_config_t cfg  = HTTPD_DEFAULT_CONFIG();
     cfg.server_port     = 80;
-    cfg.stack_size      = 8192;
+    cfg.stack_size      = 10240;
     cfg.lru_purge_enable = true;
     httpd_handle_t srv  = NULL;
     ESP_ERROR_CHECK(httpd_start(&srv, &cfg));
@@ -1253,8 +1279,11 @@ static void config_server_start(void)
 /* ------------------------------------------------------------------ */
 static void IRAM_ATTR btn_isr_handler(void *arg)
 {
-    /* When the screen is blanked, the first tap only wakes it — no forced
-     * poll or beep. Once it's on, a tap forces a poll with feedback. */
+    static int64_t last_press_us = 0;
+    int64_t now = esp_timer_get_time();
+    if (now - last_press_us < 200000) return;
+    last_press_us = now;
+
     if (!g_screen_on) {
         g_screen_wake = true;
         return;
@@ -1364,6 +1393,10 @@ void app_main(void)
     bool    ota_checked = false;
     while (1) {
         lv_task_handler();
+        if (g_led_dirty) {
+            g_led_dirty = false;
+            led_set(g_led_pending_r, g_led_pending_g, g_led_pending_b);
+        }
         if (g_usage_dirty) {
             ui_update();
         }

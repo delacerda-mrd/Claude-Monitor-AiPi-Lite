@@ -20,6 +20,7 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "driver/i2c.h"
 #include "driver/i2s_std.h"
 #include "driver/gpio.h"
@@ -67,6 +68,12 @@ static int16_t            sine_table[SINE_TABLE_SIZE];
 static const int vol_presets[] = {65, 70, 80};
 static const int vol_presets_count = 3;
 static int vol_index = 0;           /* starts at 65 % */
+
+static SemaphoreHandle_t audio_mutex = NULL;
+
+#define TONE_MAX_MS        300
+#define TONE_BUF_SAMPLES   (SAMPLE_RATE * TONE_MAX_MS / 1000)
+static int16_t *tone_buf = NULL;
 
 /* ------------------------------------------------------------------ */
 /* Musical note frequencies (equal temperament, A4 = 440 Hz)           */
@@ -310,6 +317,12 @@ esp_err_t audio_init(void)
 
     sine_table_init();
 
+    audio_mutex = xSemaphoreCreateMutex();
+    if (!audio_mutex) return ESP_ERR_NO_MEM;
+
+    tone_buf = malloc(TONE_BUF_SAMPLES * 2 * sizeof(int16_t));
+    if (!tone_buf) return ESP_ERR_NO_MEM;
+
     esp_err_t ret = i2c_init();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "I2C init failed: %s", esp_err_to_name(ret));
@@ -349,9 +362,9 @@ void audio_play_tone(int freq_hz, int duration_ms)
 
     int total_samples = SAMPLE_RATE * duration_ms / 1000;
     if (total_samples < 1) total_samples = 1;
+    if (total_samples > TONE_BUF_SAMPLES) total_samples = TONE_BUF_SAMPLES;
 
-    /* Stereo interleaved: both channels carry the same mono signal */
-    int16_t *stereo = malloc(total_samples * 2 * sizeof(int16_t));
+    int16_t *stereo = tone_buf;
     if (!stereo) return;
 
     float phase_inc = (float)freq_hz / SAMPLE_RATE;
@@ -399,7 +412,6 @@ void audio_play_tone(int freq_hz, int duration_ms)
     i2s_channel_preload_data(tx_handle, stereo,
                              total_samples * 2 * sizeof(int16_t),
                              &preloaded);
-    free(stereo);
 
     pa_set(true);
     vTaskDelay(pdMS_TO_TICKS(5));           /* PA rail settle              */
@@ -432,6 +444,8 @@ void audio_play_melody(melody_type_t type)
     default: return;
     }
 
+    if (!audio_mutex || xSemaphoreTake(audio_mutex, pdMS_TO_TICKS(50)) != pdTRUE) return;
+
     audio_resume();   /* power up once for the whole melody */
     for (int i = 0; i < count; i++) {
         if (notes[i].freq == REST) {
@@ -441,6 +455,8 @@ void audio_play_melody(melody_type_t type)
         }
     }
     audio_suspend();  /* back to idle — stop MCLK, mute codec */
+
+    xSemaphoreGive(audio_mutex);
 }
 
 /* ------------------------------------------------------------------ */
@@ -450,6 +466,7 @@ void audio_play_melody(melody_type_t type)
 void audio_volume_cycle(void)
 {
     if (!es_handle) return;
+    if (!audio_mutex || xSemaphoreTake(audio_mutex, pdMS_TO_TICKS(50)) != pdTRUE) return;
 
     vol_index = (vol_index + 1) % vol_presets_count;
     int vol = vol_presets[vol_index];
@@ -460,4 +477,6 @@ void audio_volume_cycle(void)
     int freq = (vol == 65) ? 440 : (vol == 70) ? 660 : 880;
     audio_play_tone(freq, 150);
     audio_suspend();   /* back to idle */
+
+    xSemaphoreGive(audio_mutex);
 }
