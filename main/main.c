@@ -231,6 +231,7 @@ static lv_color_t color_for_pct(int pct)
 static void fmt_countdown(char *buf, size_t n, long epoch)
 {
     time_t now  = time(NULL);
+    if (now < 1600000000 || epoch == 0) { snprintf(buf, n, "resets --"); return; }
     long   diff = epoch - (long)now;
     if (diff <= 0) { snprintf(buf, n, "now"); return; }
     long h = diff / 3600;
@@ -244,6 +245,8 @@ static void fmt_countdown(char *buf, size_t n, long epoch)
 static void ui_update(void)
 {
     if (!g_bar_session) return;
+
+    g_usage_dirty = false;
 
     xSemaphoreTake(g_usage_mutex, portMAX_DELAY);
     claude_usage_t u = g_usage;
@@ -278,8 +281,6 @@ static void ui_update(void)
     } else {
         lv_obj_add_flag(g_lbl_status, LV_OBJ_FLAG_HIDDEN);
     }
-
-    g_usage_dirty = false;
 }
 
 /* Render the battery label. LVGL 8 is single-threaded, so all label access
@@ -493,17 +494,18 @@ static EventGroupHandle_t g_wifi_eg;
 static int g_wifi_retries = 0;
 static bool g_wifi_ever_connected = false;
 
+#define NOTIFY_HOST_URL "http://shadowtrooper.local:5555/notify"
+
 static void notify_host_online_task(void *arg)
 {
-    char *host = (char *)arg;
+    (void)arg;
     esp_http_client_config_t cfg = {
-        .url = host,
+        .url = NOTIFY_HOST_URL,
         .timeout_ms = 5000,
     };
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
     if (!client) {
         ESP_LOGW(TAG, "Failed to init HTTP client for host notify");
-        free(host);
         vTaskDelete(NULL);
         return;
     }
@@ -515,18 +517,12 @@ static void notify_host_online_task(void *arg)
         ESP_LOGI(TAG, "Host notified: HTTP %d", code);
     }
     esp_http_client_cleanup(client);
-    free(host);
     vTaskDelete(NULL);
 }
 
 static void notify_host_online(void)
 {
-    char host_url[256];
-    snprintf(host_url, sizeof(host_url), "http://shadowtrooper.local:5555/notify");
-    char *url_copy = malloc(strlen(host_url) + 1);
-    if (!url_copy) return;
-    strcpy(url_copy, host_url);
-    xTaskCreate(notify_host_online_task, "notify_host", 4096, url_copy, 2, NULL);
+    xTaskCreate(notify_host_online_task, "notify_host", 4096, NULL, 2, NULL);
 }
 
 static void wifi_event_handler(void *arg, esp_event_base_t base,
@@ -638,12 +634,12 @@ static esp_err_t http_evt_handler(esp_http_client_event_t *evt)
     char *v = evt->header_value;
 
     if (strcasecmp(k, "anthropic-ratelimit-unified-5h-utilization") == 0) {
-        ctx->session_pct = (int)(atof(v) * 100.0f);
+        ctx->session_pct = (int)(atof(v) * 100.0 + 0.5);
         ctx->got_5h = true;
     } else if (strcasecmp(k, "anthropic-ratelimit-unified-5h-reset") == 0) {
         ctx->session_reset = atol(v);
     } else if (strcasecmp(k, "anthropic-ratelimit-unified-7d-utilization") == 0) {
-        ctx->weekly_pct = (int)(atof(v) * 100.0f);
+        ctx->weekly_pct = (int)(atof(v) * 100.0 + 0.5);
         ctx->got_7d = true;
     } else if (strcasecmp(k, "anthropic-ratelimit-unified-7d-reset") == 0) {
         ctx->weekly_reset = atol(v);
@@ -861,6 +857,8 @@ static void batt_update(void)
         }
         pct = 100;
     }
+    if (pct < 0) pct = 0;
+    if (pct > 100) pct = 100;
 
     /* Hand the value to the main loop; ui_render_battery() draws it. */
     g_batt_pct = pct;
@@ -877,6 +875,7 @@ static void poll_task(void *arg)
 
     /* threshold-crossing tracking */
     int prev_session = 0, prev_weekly = 0;
+    poll_result_t prev_res = POLL_OK;
 
     while (1) {
         batt_update();
@@ -897,12 +896,20 @@ static void poll_task(void *arg)
             xSemaphoreGive(g_usage_mutex);
             led_set_pending(1, 0, 0);
             g_usage_dirty = true;
-            g_screen_wake = true;   /* show the error */
-            if (res == POLL_AUTH) {
-                notify_host_online();
+            /* Only wake/beep/notify on the transition into (or change of)
+             * error state — an error that persists for hours on battery
+             * must not re-wake the screen and beep every poll. */
+            if (res != prev_res) {
+                g_screen_wake = true;   /* show the error */
+                if (res == POLL_AUTH) {
+                    notify_host_online();
+                }
+                audio_play_melody(MELODY_ERROR);
             }
-            audio_play_melody(MELODY_ERROR);
         } else {
+            if (prev_res != POLL_OK) {
+                g_screen_wake = true;   /* recovered - let the user see it */
+            }
             /* threshold-crossing alerts */
             xSemaphoreTake(g_usage_mutex, portMAX_DELAY);
             int sp = g_usage.session_pct;
@@ -926,6 +933,7 @@ static void poll_task(void *arg)
             prev_session = sp;
             prev_weekly  = wp;
         }
+        prev_res = res;
 
         /* Wait the poll interval (longer on battery), waking early on
          * g_force_poll. Re-check power state every ~2s so USB plug/unplug
@@ -949,22 +957,27 @@ static void poll_task(void *arg)
 /* ------------------------------------------------------------------ */
 /* NVS token persistence                                                */
 /* ------------------------------------------------------------------ */
+static void nvs_save_token(const char *tok);
+
 static void nvs_load_token(void)
 {
     nvs_handle_t h;
     if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &h) != ESP_OK) {
         ESP_LOGI(TAG, "NVS empty - seeding from secrets.h");
         strncpy(g_token, CLAUDE_TOKEN, TOKEN_MAX - 1);
+        nvs_save_token(g_token);
         return;
     }
     size_t len = TOKEN_MAX;
     if (nvs_get_str(h, NVS_KEY_TOKEN, g_token, &len) == ESP_OK) {
         ESP_LOGI(TAG, "Loaded token from NVS");
+        nvs_close(h);
     } else {
         ESP_LOGI(TAG, "No NVS token - seeding from secrets.h");
         strncpy(g_token, CLAUDE_TOKEN, TOKEN_MAX - 1);
+        nvs_close(h);
+        nvs_save_token(g_token);
     }
-    nvs_close(h);
 }
 
 static void nvs_save_token(const char *tok)
@@ -1135,9 +1148,17 @@ static esp_err_t cfg_post(httpd_req_t *req)
      * until content_len (or the buffer) is satisfied. */
     char body[TOKEN_MAX + 64];
     int  total = 0;
+    int  timeouts = 0;
     while (total < (int)sizeof(body) - 1) {
         int r = httpd_req_recv(req, body + total, sizeof(body) - 1 - total);
-        if (r == HTTPD_SOCK_ERR_TIMEOUT) continue;
+        if (r == HTTPD_SOCK_ERR_TIMEOUT) {
+            if (++timeouts > 5) {
+                httpd_resp_send_err(req, HTTPD_408_REQ_TIMEOUT, "recv timeout");
+                return ESP_FAIL;
+            }
+            continue;
+        }
+        timeouts = 0;
         if (r < 0) {
             httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "recv error");
             return ESP_FAIL;
@@ -1218,9 +1239,18 @@ static esp_err_t ota_post(httpd_req_t *req)
 
     static char buf[1024];   /* httpd handlers are serialized -> static is safe */
     int remaining = req->content_len;
+    int timeouts  = 0;
     while (remaining > 0) {
         int r = httpd_req_recv(req, buf, MIN(remaining, (int)sizeof(buf)));
-        if (r == HTTPD_SOCK_ERR_TIMEOUT) continue;
+        if (r == HTTPD_SOCK_ERR_TIMEOUT) {
+            if (++timeouts > 5) {
+                esp_ota_abort(ota);
+                httpd_resp_send_err(req, HTTPD_408_REQ_TIMEOUT, "recv timeout");
+                return ESP_FAIL;
+            }
+            continue;
+        }
+        timeouts = 0;
         if (r <= 0) {
             esp_ota_abort(ota);
             httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "recv error");
@@ -1356,9 +1386,22 @@ void app_main(void)
          * breaks Wi-Fi, leaving the slot PENDING_VERIFY means the next reset
          * auto-rolls-back to the last working image. An image is only trusted
          * once it reaches the online main loop. */
-        /* spin LVGL only */
+        /* Spin LVGL, periodically retrying the connection so a router that
+         * comes back late (e.g. 30s after a power cut) is still caught —
+         * throttled to every ~5s so the radio isn't hammered in a tight
+         * loop. On success, restart cleanly through the normal path rather
+         * than trying to bring up SNTP/mDNS/server/poll-task from here. */
+        int wifi_retry_ticks = 0;
         while (1) {
             lv_task_handler();
+            if (xEventGroupGetBits(g_wifi_eg) & WIFI_CONNECTED_BIT) {
+                ESP_LOGW(TAG, "Wi-Fi came up late - restarting");
+                esp_restart();
+            }
+            if (++wifi_retry_ticks >= 500) {   /* ~5s at the 10ms tick below */
+                wifi_retry_ticks = 0;
+                esp_wifi_connect();
+            }
             vTaskDelay(pdMS_TO_TICKS(10));
         }
     }
@@ -1383,14 +1426,25 @@ void app_main(void)
 
     /* Main loop */
     g_last_activity_us  = esp_timer_get_time();   /* keep screen on at boot */
-    int64_t loop_start  = esp_timer_get_time();
-    bool    ota_checked = false;
+    int64_t loop_start   = esp_timer_get_time();
+    bool    ota_checked  = false;
+    int64_t last_minute_us = loop_start;
     while (1) {
         lv_task_handler();
         if (g_led_dirty) {
             g_led_dirty = false;
             led_set(g_led_pending_r, g_led_pending_g, g_led_pending_b);
         }
+
+        /* Recompute countdown labels once a minute even without a poll, so
+         * "resets 5m" doesn't sit stale for up to POLL_INTERVAL_BATT_S.
+         * Skip while the screen is off - nothing to redraw. */
+        int64_t now_us = esp_timer_get_time();
+        if (g_screen_on && now_us - last_minute_us > 60 * 1000000LL) {
+            last_minute_us = now_us;
+            g_usage_dirty = true;
+        }
+
         if (g_usage_dirty) {
             ui_update();
         }

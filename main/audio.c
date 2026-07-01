@@ -2,7 +2,7 @@
  * audio.c  --  ES8311 I2S tone player for AIPI-Lite
  *
  * Pin mapping (from xiaozhi-esp32 board/aipi-lite/config.h):
- *   I2C  SDA=4   SCL=5        — ES8311 control
+ *   I2C  SDA=5   SCL=4        — ES8311 control
  *   I2S  MCLK=6  BCLK=14  WS=12  DOUT=11  DIN=13
  *   PA   GPIO 9               — external speaker amplifier enable
  *

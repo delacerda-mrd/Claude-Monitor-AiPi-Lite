@@ -5,3 +5,4 @@ sdkconfig
 sdkconfig.old
 *.zip
 main/secrets.h
+.claude/audit-state/
