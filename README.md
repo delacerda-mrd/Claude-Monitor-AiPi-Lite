@@ -118,6 +118,40 @@ python3 push_claude_token.py --url http://192.168.1.42/
 # Other flags: --secret <s>  --margin <hours>  --retries <n>  --creds <path>
 ```
 
+## Notify listener (instant push on auth failure)
+
+Waiting up to 4 hours for the next `push_claude_token.py` timer tick is annoying if the device's token has actually gone bad. `notify_listener.py` closes that gap: the firmware's `notify_host_online()` fires a fire-and-forget GET/POST to a fixed URL whenever a poll comes back `POLL_AUTH` (see `NOTIFY_HOST_URL` in `main/main.c`), and this listener answers it by immediately running `push_claude_token.py` in the background.
+
+It's meant to run on whatever host `NOTIFY_HOST_URL` points at — update that constant and rebuild if you move it to a different machine.
+
+### Setup (systemd user service)
+
+```bash
+cp notify_listener.py ~/scripts/
+chmod +x ~/scripts/notify_listener.py
+
+cat > ~/.config/systemd/user/claude-notify-listener.service << 'EOF'
+[Unit]
+Description=Claude Meter Device Notification Listener
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 %h/scripts/notify_listener.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
+EOF
+
+systemctl --user daemon-reload
+systemctl --user enable --now claude-notify-listener.service
+```
+
+> **Note:** the response must include `Content-Length` — ESP-IDF's `esp_http_client` (unlike curl) doesn't accept a bodyless-until-connection-close HTTP/1.0 response as complete, and will log `ESP_ERR_HTTP_INCOMPLETE_DATA` if it's missing.
+
 ## Hardware
 
 | Component | Pins |
@@ -125,7 +159,7 @@ python3 push_claude_token.py --url http://192.168.1.42/
 | ST7735 128×128 | CLK=16, MOSI=17, CS=15, DC=7, RST=18, BL=3 |
 | WS2812 LED | GPIO 46 |
 | Button | GPIO 42 (active-low, force poll) |
-| Battery ADC | GPIO 1 (ADC1_CH1) |
+| Battery ADC | GPIO 2 (ADC1_CH1) |
 | Power hold | GPIO 10 |
 | ES8311 codec (I2C) | SDA=5, SCL=4 |
 | Speaker amp enable | GPIO 9 |
