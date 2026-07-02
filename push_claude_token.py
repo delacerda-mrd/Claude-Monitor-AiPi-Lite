@@ -5,11 +5,15 @@ Push the Claude Code OAuth access token to the Claude Meter (AiPi-Lite) device.
 
 What it does, in order:
   1. Read the token from ~/.claude/.credentials.json.
-  2. If under --margin hours remain, trigger a refresh via `claude -p ping`
-     (the CLI safely rewrites the credentials file, rotating the refresh
-     token), then re-read.  Refusal-to-push is the safety net: if the token
-     is STILL under margin (or empty) after the attempt, we exit WITHOUT
-     pushing, so the device is never poisoned with a dead token.
+  2. If under --margin hours remain, force a refresh: back-date expiresAt in
+     the credentials file, then run `claude -p ping` so the CLI rotates the
+     token through its own OAuth path (the CLI only refreshes when *it*
+     considers the token expired, not at our margin — merely calling
+     `claude -p ping` without back-dating is a no-op), then re-read.
+     Refusal-to-push is the safety net: if the token is empty or already
+     expired after the attempt, we exit WITHOUT pushing, so the device is
+     never poisoned with a dead token. An under-margin-but-still-valid
+     token is pushed anyway, with a warning.
   3. POST the fresh token to the device, trying mDNS first and falling back
      to a cached / explicit IP, with retries.  A successful hostname push
      caches the resolved IP for next time, so a flaky mDNS lookup no longer
@@ -24,11 +28,13 @@ Env equivalents: CLAUDE_METER_URL, CLAUDE_METER_IP, CLAUDE_METER_SECRET.
 Exit codes: 0 ok, 1 config/credentials error, 2 token not fresh, 3 push failed.
 """
 import argparse
+import hashlib
 import json
 import os
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -69,7 +75,7 @@ def refresh_via_cli():
     outcome) rather than silent. Returns True if the call succeeded."""
     claude = os.environ.get("CLAUDE_BIN") or "claude"
     try:
-        r = subprocess.run([claude, "-p", "ping"],
+        r = subprocess.run([claude, "-p", "ping", "--model", "haiku"],
                            capture_output=True, text=True, timeout=90)
     except FileNotFoundError:
         err(f"WARNING: '{claude}' not on PATH — cannot refresh "
@@ -83,6 +89,77 @@ def refresh_via_cli():
             f"{(r.stderr or r.stdout or '').strip()[:200]}")
         return False
     return True
+
+
+def fingerprint(token):
+    return hashlib.sha256(token.encode()).hexdigest()[:8]
+
+
+def _atomic_write(path, data_bytes):
+    d = os.path.dirname(path)
+    fd, tmp = tempfile.mkstemp(dir=d)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "wb") as f:
+            f.write(data_bytes)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def force_refresh(creds_path, margin_h):
+    """Force the Claude CLI to rotate the OAuth token by back-dating
+    expiresAt, then letting `claude -p ping` refresh through the CLI's own
+    OAuth path. Returns True if the token actually rotated."""
+    for _attempt in range(2):
+        st_before = os.stat(creds_path)
+        orig_bytes = open(creds_path, "rb").read()
+        j = json.loads(orig_bytes)
+        old_token = j["claudeAiOauth"]["accessToken"]
+        old_exp = j["claudeAiOauth"]["expiresAt"]
+
+        j["claudeAiOauth"]["expiresAt"] = int(time.time() * 1000) - 60_000
+        new_bytes = json.dumps(j, indent=2).encode() + b"\n"
+
+        # Re-check mtime right before the write; if something else touched
+        # the file (e.g. a live interactive session) since we read it,
+        # restart from a fresh read rather than clobbering it.
+        st_now = os.stat(creds_path)
+        if st_now.st_mtime != st_before.st_mtime:
+            continue
+        _atomic_write(creds_path, new_bytes)
+        break
+    else:
+        err("WARNING: credentials file kept changing underneath us — "
+            "skipping forced refresh this cycle")
+        return False
+
+    refresh_via_cli()
+
+    new_j = json.loads(open(creds_path, "rb").read())
+    new_token = new_j["claudeAiOauth"]["accessToken"]
+    new_exp = new_j["claudeAiOauth"]["expiresAt"]
+    rotated = new_token != old_token and new_exp > old_exp
+
+    if rotated:
+        log(f"Rotated token {fingerprint(old_token)} -> {fingerprint(new_token)} "
+            f"(new expiry {time.strftime('%F %T', time.localtime(new_exp / 1000))})")
+    else:
+        err("WARNING: 'claude -p ping' did not rotate the token")
+        # Only restore if the file still holds our back-dated marker and the
+        # old token — otherwise a concurrent legitimate refresh landed and we
+        # must not clobber it.
+        if new_token == old_token and new_exp == j["claudeAiOauth"]["expiresAt"]:
+            _atomic_write(creds_path, orig_bytes)
+            err("WARNING: restored original credentials file")
+
+    return rotated
 
 
 # ----------------------------------------------------------------------------
@@ -138,10 +215,11 @@ def push(targets, token, secret, retries):
                 log(f"Device responded: HTTP {status}  ({url})")
                 return url
             except urllib.error.HTTPError as e:
-                # The device answered — a 4xx/5xx won't fix itself on retry.
+                # The device answered — a 4xx/5xx won't fix itself on retry,
+                # and both targets are the same device, so don't fall over
+                # to the next target either.
                 err(f"Device rejected push ({url}): HTTP {e.code} {e.reason}")
-                last = e
-                break
+                return None
             except (urllib.error.URLError, socket.error, OSError) as e:
                 reason = getattr(e, "reason", e)
                 last = e
@@ -191,9 +269,10 @@ def main():
         sys.exit(1)
 
     rem = remaining_hours(info)
+    rotated = None
     if rem < args.margin:
-        log(f"Token expires in {rem:.1f}h — refreshing via 'claude -p ping'...")
-        refresh_via_cli()
+        log(f"Token expires in {rem:.1f}h — forcing refresh via 'claude -p ping'...")
+        rotated = force_refresh(args.creds, args.margin)
         try:
             info = load_creds(args.creds)            # re-read after refresh
         except Exception as e:
@@ -209,6 +288,13 @@ def main():
         err(f"ERROR: token still expired ({rem:.1f}h) after refresh — "
             f"not pushing a dead token")
         sys.exit(2)
+    if rotated is False:
+        err(f"WARNING: refresh did not rotate token; pushing existing "
+            f"token with {rem:.1f}h left")
+
+    log(f"Token {fingerprint(token)} expires "
+        f"{time.strftime('%F %T', time.localtime(info.get('expiresAt', 0) / 1000))} "
+        f"({rem:.1f}h)")
 
     # Build target list: configured host first, then a fallback IP
     # (explicit --ip, else last-known-good cached IP).
