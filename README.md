@@ -62,33 +62,9 @@ mkdir -p ~/scripts
 cp push_claude_token.py ~/scripts/
 chmod +x ~/scripts/push_claude_token.py
 
-# Create systemd user service
+# Install the version-controlled unit files (see host/)
 mkdir -p ~/.config/systemd/user
-cat > ~/.config/systemd/user/claude-token-push.service << 'EOF'
-[Unit]
-Description=Push Claude OAuth token to Claude Meter
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=oneshot
-# claude lives in a per-user dir — make sure the unit can find it.
-Environment=CLAUDE_BIN=%h/.local/bin/claude
-ExecStart=/usr/bin/python3 %h/scripts/push_claude_token.py
-EOF
-
-cat > ~/.config/systemd/user/claude-token-push.timer << 'EOF'
-[Unit]
-Description=Push Claude token every 4 hours
-
-[Timer]
-OnBootSec=2min
-OnUnitActiveSec=4h
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-EOF
+cp host/claude-token-push.service host/claude-token-push.timer ~/.config/systemd/user/
 
 # Enable and start
 systemctl --user daemon-reload
@@ -130,21 +106,8 @@ It's meant to run on whatever host `NOTIFY_HOST_URL` points at — update that c
 cp notify_listener.py ~/scripts/
 chmod +x ~/scripts/notify_listener.py
 
-cat > ~/.config/systemd/user/claude-notify-listener.service << 'EOF'
-[Unit]
-Description=Claude Meter Device Notification Listener
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-ExecStart=/usr/bin/python3 %h/scripts/notify_listener.py
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=default.target
-EOF
+# Install the version-controlled unit file (see host/)
+cp host/claude-notify-listener.service ~/.config/systemd/user/
 
 systemctl --user daemon-reload
 systemctl --user enable --now claude-notify-listener.service

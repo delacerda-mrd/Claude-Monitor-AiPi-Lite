@@ -1,0 +1,13 @@
+[Unit]
+Description=Claude Meter Device Notification Listener
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 %h/scripts/notify_listener.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

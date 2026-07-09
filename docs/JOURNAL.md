@@ -20,6 +20,9 @@ FW_PORT_KIT adopted for ongoing maintenance/feature work.
   confirmed running** on the device (user confirmed at adoption).
 - Host tooling: `push_claude_token.py` token rotation verified end-to-end 2026-07-02
   (force-expire + `claude -p ping`, HTTP 200 to device); `notify_listener.py` set up.
+  Host push pipeline was accidentally torn down 2026-07-09 00:11 (units deleted) and
+  **restored the same day** — the three systemd user units are now version-controlled in
+  `host/` so they can't be silently lost again. Timer + listener enabled, verified HTTP 200.
 
 **Known broken / unverified:**
 - None blocking. Not formally measured: heap/stack headroom under load, discrete
@@ -38,6 +41,27 @@ FW_PORT_KIT adopted for ongoing maintenance/feature work.
 ---
 
 ## Session Log (newest first)
+
+### 2026-07-09 (Linux) — Restored host token-push pipeline; units now version-controlled
+**Symptom:** Device stopped receiving token pushes; would go dead once its token expired.
+**Root cause (host-side only — no code broken):** At **Jul 9 00:11:21** an interactive
+`systemctl` invocation stopped `claude-token-push.timer` and `claude-notify-listener.service`,
+and their unit files were deleted from `~/.config/systemd/user/` (journal confirms both units
+worked normally right up to that moment — last successful push Jul 9 00:05:58, HTTP 200). With
+no 4h timer and nothing listening on port 5555, the device's `POLL_AUTH` → online-notify ping
+went unanswered, so an expired token stayed dead until a manual push.
+**Verified healthy (no redeploy needed):** `~/scripts/push_claude_token.py` and
+`notify_listener.py` byte-identical to repo; device up (mDNS + `192.168.66.123` both HTTP 200);
+credentials fresh; `~/.local/bin/claude` present.
+**Fix:**
+- Recreated the three systemd user units exactly per README (the load-bearing
+  `Environment=CLAUDE_BIN=%h/.local/bin/claude` line included), enabled + started both.
+- **Hardening:** checked the units into the repo under `host/`; README setup sections now
+  `cp host/*.{service,timer}` instead of heredocs (keeps installed = version-controlled).
+**Verified on host:** `list-timers` shows NEXT 22:46 EDT (~4h); both units `enabled`;
+`notify_listener.py` listening on 5555, `curl localhost:5555/notify` → `OK` + journal
+"Token push succeeded"; manual `claude-token-push.service` run → "Device responded: HTTP 200"
+(fresh token, expires 2026-07-10 02:10). No firmware source touched.
 
 ### 2026-07-09 (Linux) — Adopted FW_PORT_KIT
 **Goal:** Retrofit the FW_PORT_KIT workflow (docs + session protocols) onto this

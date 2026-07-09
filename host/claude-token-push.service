@@ -1,0 +1,10 @@
+[Unit]
+Description=Push Claude OAuth token to Claude Meter
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# claude lives in a per-user dir — make sure the unit can find it.
+Environment=CLAUDE_BIN=%h/.local/bin/claude
+ExecStart=/usr/bin/python3 %h/scripts/push_claude_token.py
