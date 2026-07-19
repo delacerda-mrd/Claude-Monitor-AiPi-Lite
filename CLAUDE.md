@@ -1,8 +1,8 @@
 # Claude Meter v2 — AiPi-Lite edition · Project Context for Claude Code
 
 ## SESSION START PROTOCOL (do this first, every session)
-1. `git pull` (single-machine, but keeps the habit + backup in sync). On journal
-   conflict: keep both sides' entries, merge Current Status by date.
+1. `git pull` — sessions run from BOTH the Mac and the Linux PC; the checkout may
+   be stale. On journal conflict: keep both sides' entries, merge Current Status by date.
 2. Read `docs/JOURNAL.md` — the Current Status block says exactly where we are.
 3. Read `docs/BRINGUP.md` when deciding what to work on next.
 4. Read `docs/ARCHITECTURE.md` when the task touches firmware behavior or internals
@@ -38,7 +38,8 @@ source ~/esp/esp-idf/export.sh
 idf.py build
 idf.py -p /dev/ttyACM0 flash monitor
 ```
-- Serial port: `/dev/ttyACM0` (Linux, native USB-CDC). This project's only dev machine is Linux.
+- Serial port: `/dev/ttyACM0` (Linux, native USB-CDC). Build/flash happen on the Linux
+  PC only — the Mac has no ESP-IDF and no `secrets.h` (docs-only sessions there).
 - OTA (post first USB flash): `curl --data-binary @build/*.bin -H 'X-Auth: <secret>' http://claude-meter.local/ota`
 - If a build misbehaves after an IDF change: `idf.py fullclean`.
 

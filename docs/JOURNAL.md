@@ -6,7 +6,7 @@
 
 ---
 
-## Current Status (updated 2026-07-09)
+## Current Status (updated 2026-07-19)
 
 **Phase:** Complete & in daily use. Post-bring-up (BRINGUP Phases 1–6 essentially green);
 FW_PORT_KIT adopted for ongoing maintenance/feature work.
@@ -32,15 +32,39 @@ FW_PORT_KIT adopted for ongoing maintenance/feature work.
 - [ ] (open — ask user what to work on next)
 
 **Environment notes:**
-- Single dev machine: this Linux box. Serial `/dev/ttyACM0` (native USB-CDC).
+- Build/flash machine: the Linux box. Serial `/dev/ttyACM0` (native USB-CDC).
 - ESP-IDF **v5.4.4**. Build: `source ~/esp/esp-idf/export.sh && idf.py build`.
+- Sessions ALSO run from the Mac (2026-07-19 onward): **no ESP-IDF, no
+  `main/secrets.h` there** — docs-only until installed. `git pull` at session
+  start is now load-bearing, not just habit (a stale Mac checkout caused a
+  duplicate-adoption near-miss on 2026-07-19).
+- Mac has untracked `copy_claude_token.py` + `Copy Claude Token.command`
+  (uncommitted Mac-side token tooling — decide whether to keep/commit).
 - Sync/backup via GitHub remote `origin`
-  (github.com/delacerda-mrd/Claude-Monitor-AiPi-Lite). Single machine, so cross-machine
-  conflicts are unlikely, but `git pull` at session start remains the habit.
+  (github.com/delacerda-mrd/Claude-Monitor-AiPi-Lite).
+- Board ref fed back to the kit 2026-07-19: `FW_PORT_KIT/boards/AIPI-Lite.md`
+  (keep in sync with `docs/BOARD_REFERENCE.md`).
 
 ---
 
 ## Session Log (newest first)
+
+### 2026-07-19 (Mac) — First Mac session; stale checkout caught; board ref fed to kit
+**Goal:** `/fw` resume from the Mac.
+**Tried:** The Mac checkout was 3 commits behind (pre-adoption), so /fw misread the
+project as un-adopted and re-ran the adopt flow blind — new docs written and committed
+locally before `git push` was rejected and the remote's superior 2026-07-09 adoption
+surfaced.
+**Result / evidence:** Dropped the duplicate commit via `git rebase --skip`; remote
+docs kept unchanged. Kept one useful by-product: the board reference is now fed back
+into the kit as `FW_PORT_KIT/boards/AIPI-Lite.md` (verbatim copy of
+`docs/BOARD_REFERENCE.md`, cross-linked both ways) — the adoption had left that as a
+"if reused, copy it" note.
+**Conclusion:** This is now a two-machine project (Mac = docs/sessions, Linux =
+build/flash). CLAUDE.md single-machine wording updated. Mac cannot build: no ESP-IDF,
+no `main/secrets.h`.
+**Next steps:** ask the user what to work on next; optionally install ESP-IDF v5.4.4
+on the Mac and create `secrets.h` if Mac-side builds are wanted.
 
 ### 2026-07-09 (Linux) — Restored host token-push pipeline; units now version-controlled
 **Symptom:** Device stopped receiving token pushes; would go dead once its token expired.

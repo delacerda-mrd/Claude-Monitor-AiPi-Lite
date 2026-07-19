@@ -136,5 +136,6 @@ boot; the firmware drives it without issue `(verified on hardware)`.
 Display, LED, button, battery ADC, audio codec, Wi-Fi, USB detect and OTA were all
 verified on a physically assembled unit before this reference was written (the device
 is in daily use). Values above are therefore `(verified on hardware)` unless marked
-otherwise. If this board gets reused, copy this file to
-`FW_PORT_KIT/boards/AIPI-Lite.md` to feed it back into the kit.
+otherwise. Fed back into the kit 2026-07-19 (master copy:
+`FW_PORT_KIT/boards/AIPI-Lite.md`; this file is the project copy — keep the
+two in sync).
