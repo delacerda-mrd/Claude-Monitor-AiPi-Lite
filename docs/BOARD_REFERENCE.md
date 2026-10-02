@@ -21,7 +21,8 @@ CYD/ES3C28P quirks over.
 | Parameter | Value |
 |-----------|-------|
 | Module / chip | ESP32-S3 `(firmware: CONFIG_IDF_TARGET=esp32s3)` |
-| PSRAM | **None enabled** — `CONFIG_SPIRAM` is not set. Firmware runs entirely in internal SRAM. `(firmware)` |
+| Module | **ESP32-S3-WROOM-1 `N16R8`** (marking "MCN16R8"; community board photo, sticks918/AIPI-Lite-ESPHome) |
+| PSRAM | **8 MB octal PSRAM, embedded** — esptool: "Embedded PSRAM 8MB (AP_3v3)". Enabled since v2.1 (`CONFIG_SPIRAM_MODE_OCT`, 80 MHz): heap 8.4 MB. v1/v2.0 never enabled it (the old "none" here described the config, not the chip). Octal PSRAM uses GPIO33–37 internally. `(verified on hardware 2026-10-02)` |
 | External flash | 16 MB, DIO mode @ 80 MHz `(firmware: CONFIG_ESPTOOLPY_FLASHSIZE=16MB)` |
 | USB | Native USB-CDC (USB-Serial-JTAG). `usb_serial_jtag_is_connected()` is used as the "on external power" signal. `(firmware, verified on hardware)` |
 | CPU clock | 160 MHz max, scales 40–160 MHz via ESP-PM (`CONFIG_PM_ENABLE=y`, light sleep OFF — it kills the SPI bus). `(firmware)` |

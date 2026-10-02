@@ -43,7 +43,7 @@
 static const char *TAG = "main";
 
 #define LCD_SPI_HOST    SPI2_HOST
-#define LCD_PIXEL_CLK   27000000
+#define LCD_PIXEL_CLK   40000000        /* stock xiaozhi fw runs this panel at 40 MHz */
 #define LVGL_BUF_ROWS   32
 #define OTA_SELFTEST_S  15          /* stable online this long -> confirm image */
 #define LONG_PRESS_MS   600

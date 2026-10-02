@@ -10,6 +10,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
+#include "driver/gpio.h"
 #include "driver/ledc.h"
 #include "driver/usb_serial_jtag.h"
 #include "esp_adc/adc_oneshot.h"
@@ -30,6 +31,20 @@ static bool s_charger_trend;
 
 void power_init(void)
 {
+    /* Probe inputs (see board.h). Plain inputs are harmless whatever is
+     * actually wired there; the button gets a pull-up like the stock fw. */
+    gpio_config_t in = {
+        .pin_bit_mask = (1ULL << PIN_CHG_DET) | (1ULL << PIN_PROBE_21),
+        .mode = GPIO_MODE_INPUT,
+    };
+    gpio_config(&in);
+    gpio_config_t btn = {
+        .pin_bit_mask = 1ULL << PIN_BTN_PWR,
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+    };
+    gpio_config(&btn);
+
     adc_oneshot_unit_init_cfg_t ucfg = { .unit_id = ADC_UNIT_1 };
     if (adc_oneshot_new_unit(&ucfg, &s_adc) == ESP_OK) {
         adc_oneshot_chan_cfg_t ch = {

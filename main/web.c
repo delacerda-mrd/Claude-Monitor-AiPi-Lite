@@ -29,6 +29,7 @@
 #include "freertos/task.h"
 #include "esp_app_desc.h"
 #include "esp_heap_caps.h"
+#include "driver/gpio.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_ota_ops.h"
@@ -268,7 +269,15 @@ static esp_err_t status_get(httpd_req_t *req)
     cJSON_AddStringToObject(dv, "notify", c.notify_ip[0] ? c.notify_ip : NOTIFY_HOST_DEFAULT);
     cJSON_AddNumberToObject(dv, "heap", esp_get_free_heap_size());
     cJSON_AddNumberToObject(dv, "heap_min", esp_get_minimum_free_heap_size());
-    cJSON_AddNumberToObject(dv, "heap_blk", heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+    cJSON_AddNumberToObject(dv, "heap_blk", heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+    cJSON *hwj = cJSON_AddObjectToObject(r, "hw");
+    cJSON_AddNumberToObject(hwj, "psram", heap_caps_get_total_size(MALLOC_CAP_SPIRAM));
+    cJSON_AddNumberToObject(hwj, "psram_free", heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+    cJSON_AddNumberToObject(hwj, "internal_free", heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+    cJSON_AddNumberToObject(hwj, "gpio1", gpio_get_level(PIN_BTN_PWR));
+    cJSON_AddNumberToObject(hwj, "gpio8", gpio_get_level(PIN_CHG_DET));
+    cJSON_AddNumberToObject(hwj, "gpio21", gpio_get_level(PIN_PROBE_21));
+    cJSON_AddNumberToObject(hwj, "gpio42", gpio_get_level(PIN_BTN));
 
     cJSON *st = cJSON_AddObjectToObject(r, "set");
     cJSON_AddStringToObject(st, "tz", c.tz);
