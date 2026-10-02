@@ -31,7 +31,7 @@ then reflect anything session-relevant here.
 - **Light sleep OFF** is mandatory (kills the SPI/display bus) — see BOARD_REFERENCE.md §12.
 - **Battery:** the blue single-cell LiPo is fitted; reads 100 % while on USB (charger
   pins it high — expected).
-- **Heap (v2, measured 2026-10-02):** ~113 KB free, min ~91–100 KB since boot.
+- **Heap (v2, measured 2026-10-02):** ~113 KB free; min ~91–100 KB in normal use, 59 KB during repeated screenshots.
 
 ## Flash / partitions
 Two-OTA layout on 16 MB (`partitions.csv`): `ota_0`/`ota_1` 2 MB each, `otadata`,

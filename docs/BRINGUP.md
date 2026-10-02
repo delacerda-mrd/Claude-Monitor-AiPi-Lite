@@ -72,7 +72,7 @@ Status legend: `[ ]` not started · `[~]` in progress / unverified-on-HW · `[x]
 ## Phase 5 — Integration
 - [x] All peripherals run simultaneously (display + Wi-Fi + audio + LED + battery) in daily use
 - [x] Heap headroom measured under load (v2, 2026-10-02): `/api/status` heap stats —
-  ~113 KB free, min 91–100 KB since boot across TLS polls + OTA uploads (was min 13 KB
+  ~113 KB free; min 91–100 KB across TLS polls + OTA uploads, 59 KB while hammering `/api/screen.bmp` (32 KB of strips each) — was min 13 KB
   before `LV_MEM_CUSTOM` + mbedTLS dynamic buffers)
 - [x] Poll cadence honored (120 s USB / 300 s battery)
 

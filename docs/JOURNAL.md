@@ -15,7 +15,7 @@ now the only machine — the Linux box is retired; toolchain + token pipeline mo
 (Wi-Fi from NVS), token-free `/api/oauth/usage` polling, 429 → header fallback, Mac
 launchd token push + device→Mac online-notify, all 5 pages + splash render (checked via
 `/api/screen.bmp`), Clawd animates, history survives reboots, OTA self-confirm, heap
-min ~91–100 KB. Details: BRINGUP Phase 7.
+min ~91–100 KB (59 KB under a screenshot burst). Details: BRINGUP Phase 7.
 
 **Known broken / unverified:**
 - Panel colors with `LV_COLOR_16_SWAP` not yet confirmed **by eye** (screenshots show
