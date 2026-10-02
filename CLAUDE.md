@@ -37,7 +37,8 @@ committed `dependencies.lock`).
 - `push_claude_token.py` / `notify_listener.py` + `host/macos/` (launchd) /
   `host/linux/` (systemd) — host-side token tooling (see `README.md`).
 - `tools/` — `idf.sh` (IDF wrapper), `shot.sh` (screenshot), `serial_log.py`,
-  `gen_clawd.py` (regenerates `main/clawd_anims.h`).
+  `gen_clawd.py` (regenerates `main/clawd_anims.h`), `make_voice.py` (speech pack →
+  `curl --data-binary @build/voice.bin http://claude-meter.local/voice`).
 
 ## Build / flash / debug (Mac)
 ```bash

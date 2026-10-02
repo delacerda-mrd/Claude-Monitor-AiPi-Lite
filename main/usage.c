@@ -68,6 +68,7 @@ static uint32_t hist_sum(const hist_rtc_t *r)
     return x;
 }
 static volatile bool     s_force;
+static volatile bool     s_announce;
 
 static void lock(void)   { xSemaphoreTake(s_mtx, portMAX_DELAY); }
 static void unlock(void) { xSemaphoreGive(s_mtx); }
@@ -77,6 +78,7 @@ void usage_init(void) { s_mtx = xSemaphoreCreateMutex(); }
 void usage_get(usage_t *out)        { lock(); *out = s_u;    unlock(); }
 void usage_hist_get(usage_hist_t *o){ lock(); *o = s_hist;   unlock(); }
 void usage_poll_now(void)           { s_force = true; }
+void usage_announce_next(void)      { s_announce = true; }
 
 const char *usage_src_str(usage_src_t s)
 {
@@ -340,6 +342,39 @@ static void hist_push(int s, int w)
 }
 
 /* ------------------------------------------------------------------ */
+/* Spoken status                                                       */
+/* ------------------------------------------------------------------ */
+static const char *window_at(const usage_t *u) { return u->session_pct >= u->weekly_pct ? "session_at" : "weekly_at"; }
+
+static void say_status_of(const usage_t *u)
+{
+    if (!u->ok && u->err == POLL_AUTH) { app_say("token_bad", MELODY_ERROR); return; }
+    if (!u->ok && u->err == POLL_NET)  { app_say("offline", MELODY_ERROR); return; }
+    if (!u->have_data) return;
+    char s[120];
+    time_t now = time(NULL);
+    int n = snprintf(s, sizeof(s), "session_at #%d percent .", u->session_pct);
+    if (u->session_reset > now && now > 1600000000)
+        n += snprintf(s + n, sizeof(s) - n, " resets_in ~%ld .", (long)(u->session_reset - now));
+    n += snprintf(s + n, sizeof(s) - n, " weekly_at #%d percent .", u->weekly_pct);
+    /* pace verdict for the session window (same rule as the PACE page) */
+    if (u->session_reset > now && now > 1600000000) {
+        long left = (long)(u->session_reset - now);
+        if (left > WINDOW_5H_S) left = WINDOW_5H_S;
+        int d = u->session_pct - (int)((WINDOW_5H_S - left) * 100 / WINDOW_5H_S);
+        snprintf(s + n, sizeof(s) - n, " %s", d > 10 ? "ahead" : d < -10 ? "room" : "on_pace");
+    }
+    app_say(s, MELODY_POLL_OK);
+}
+
+void usage_say_status(void)
+{
+    usage_t u;
+    usage_get(&u);
+    say_status_of(&u);
+}
+
+/* ------------------------------------------------------------------ */
 /* Poll task                                                           */
 /* ------------------------------------------------------------------ */
 static void set_polling(bool on)
@@ -423,29 +458,47 @@ static void poll_task(void *arg)
             led_show(LED_ERROR);
             /* Edge-triggered: an error that persists for hours on battery
              * must not re-wake the screen and beep every poll. */
-            if (res != prev_res) {
+            if (res != prev_res && !s_announce) {
                 screen_wake();
                 if (res == POLL_AUTH) net_notify_host();   /* ask the Mac for a token */
-                app_sound(MELODY_ERROR);
+                app_say(res == POLL_AUTH ? "token_bad" : "offline", MELODY_ERROR);
+            } else if (res != prev_res) {
+                screen_wake();
+                if (res == POLL_AUTH) net_notify_host();
             }
         } else if (res == POLL_OK) {
-            if (prev_res != POLL_OK) screen_wake();         /* recovered */
+            if (prev_res != POLL_OK) {                     /* recovered */
+                screen_wake();
+                if (prev_res == POLL_NET && !s_announce) app_say("back", MELODY_NONE);
+            }
             int worst = u.session_pct > u.weekly_pct ? u.session_pct : u.weekly_pct;
             int prev  = prev_s > prev_w ? prev_s : prev_w;
             led_show_for_pct(worst);
 
             if (prev >= 0) {
-                if (worst >= USAGE_RED_PCT && prev < USAGE_RED_PCT)
-                    app_sound(MELODY_THRESHOLD_85);
-                else if (worst >= USAGE_AMBER_PCT && prev < USAGE_AMBER_PCT)
-                    app_sound(MELODY_THRESHOLD_60);
+                char say[96];
+                if (worst >= 100 && prev < 100) {
+                    time_t rst = u.session_pct >= 100 ? u.session_reset : u.weekly_reset;
+                    time_t now = time(NULL);
+                    if (rst > now && now > 1600000000)
+                        snprintf(say, sizeof(say), "limit . back_in ~%ld", (long)(rst - now));
+                    else
+                        snprintf(say, sizeof(say), "limit");
+                    app_say(say, MELODY_THRESHOLD_85);
+                } else if (worst >= USAGE_RED_PCT && prev < USAGE_RED_PCT) {
+                    snprintf(say, sizeof(say), "warning %s #%d percent", window_at(&u), worst);
+                    app_say(say, MELODY_THRESHOLD_85);
+                } else if (worst >= USAGE_AMBER_PCT && prev < USAGE_AMBER_PCT) {
+                    snprintf(say, sizeof(say), "heads_up %s #%d percent", window_at(&u), worst);
+                    app_say(say, MELODY_THRESHOLD_60);
+                }
 
                 /* A window rolled over: usage fell sharply from a real level. */
                 bool s_reset = prev_s >= 25 && u.session_pct + 15 < prev_s;
                 bool w_reset = prev_w >= 25 && u.weekly_pct + 15 < prev_w;
                 if (s_reset || w_reset) {
                     lock(); s_u.resets++; s_u.seq++; unlock();
-                    app_sound(MELODY_RESET);
+                    app_say("fresh", MELODY_RESET);
                 }
                 if (u.session_pct != prev_s || u.weekly_pct != prev_w)
                     screen_wake();
@@ -454,6 +507,13 @@ static void poll_task(void *arg)
             prev_w = u.weekly_pct;
         }
         prev_res = res;
+
+        if (s_announce) {                   /* hold-to-refresh: read it out */
+            s_announce = false;
+            usage_t now_u;
+            usage_get(&now_u);
+            say_status_of(&now_u);
+        }
 
         /* History: one sample per HIST_STEP_S of uptime, first one at once. */
         int64_t now = esp_timer_get_time();

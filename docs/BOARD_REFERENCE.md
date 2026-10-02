@@ -119,6 +119,7 @@ boot; the firmware drives it without issue `(verified on hardware)`.
   - `nvs` @ 0x9000, 0x6000 (kept at original offset so a saved token survives re-flash)
   - `otadata` @ 0xf000, `phy_init` @ 0x11000
   - `ota_0` @ 0x20000, 2 MB · `ota_1` @ 0x220000, 2 MB
+  - `voice` @ 0x420000, 4 MB (data, subtype 0x40) — speech clip pack (v2.1, 2026-10-02)
 - No PSRAM — all runtime buffers in internal SRAM (LVGL uses two 4 KB partial-refresh buffers, 16 rows each).
 
 ## 12. Known Quirks

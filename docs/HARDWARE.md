@@ -35,5 +35,6 @@ then reflect anything session-relevant here.
 
 ## Flash / partitions
 Two-OTA layout on 16 MB (`partitions.csv`): `ota_0`/`ota_1` 2 MB each, `otadata`,
-`nvs` kept at its original 0x9000/0x6000 offset so a saved token survives a re-flash.
+`nvs` kept at its original 0x9000/0x6000 offset so a saved token survives a re-flash;
+`voice` 4 MB data partition @ 0x420000 for the speech pack (v2.1).
 Details + rollback behavior in [`ARCHITECTURE.md`](ARCHITECTURE.md).

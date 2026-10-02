@@ -266,7 +266,7 @@ static void net_task(void *arg)
         start_setup_ap();
         g_sys.boot = BOOT_SETUP;        /* after the AP name/password exist */
         web_start();
-        app_sound(MELODY_SETUP);
+        app_say("setup", MELODY_SETUP);
         for (int t = 0;; t++) {
             vTaskDelay(pdMS_TO_TICKS(1000));
             if (xEventGroupGetBits(s_eg) & CONNECTED_BIT) {
@@ -283,7 +283,7 @@ static void net_task(void *arg)
     mdns_setup();
     web_start();
     g_sys.boot = BOOT_FETCH;
-    app_sound(MELODY_BOOT);
+    app_say("online", MELODY_BOOT);
     usage_start();
     vTaskDelete(NULL);
 }

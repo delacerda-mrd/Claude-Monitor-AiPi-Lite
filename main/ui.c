@@ -284,7 +284,7 @@ static void sb_update(bool polling)
 /* Page: RINGS                                                         */
 /* ------------------------------------------------------------------ */
 static struct {
-    lv_obj_t *arc_s, *arc_w, *cap, *pair, *num, *pct, *sub, *w_cap, *w_val, *r_icon, *r_val;
+    lv_obj_t *arc_s, *arc_w, *pair, *num, *pct, *sub, *w_cap, *w_val, *r_icon, *r_val;
     int shown;                  /* value currently displayed by the count-up */
 } s_r;
 
@@ -341,10 +341,6 @@ static void rings_build(lv_obj_t *s)
     lv_obj_set_pos(s_r.arc_s, 8, 14);
     s_r.arc_w = mk_ring(s, 94, 7);
     lv_obj_set_pos(s_r.arc_w, 17, 23);
-
-    s_r.cap = mk_label(s, F_MONO, C_FAINT, "SESSION");
-    lv_obj_set_style_text_letter_space(s_r.cap, 1, 0);
-    lv_obj_align(s_r.cap, LV_ALIGN_TOP_MID, 0, 43);
 
     /* "42" + "%" as one centered row; flex re-centers as digits change.
      * Bottom-aligned, then the % is lifted by the difference in the two

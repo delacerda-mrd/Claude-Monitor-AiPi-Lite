@@ -48,5 +48,7 @@ void usage_start(void);             /* spawn the poll task               */
 void usage_get(usage_t *out);
 void usage_hist_get(usage_hist_t *out);
 void usage_poll_now(void);          /* any task: poll ASAP               */
+void usage_announce_next(void);     /* speak the result of the next poll */
+void usage_say_status(void);        /* speak the current numbers now     */
 const char *usage_src_str(usage_src_t s);
 const char *usage_err_str(poll_result_t r);

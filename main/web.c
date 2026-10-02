@@ -10,6 +10,8 @@
  *   POST /api/wifi      JSON {ssid, pass}; saves and reboots
  *   POST /api/poll      force a poll now
  *   POST /api/button    {"long":bool} simulate the button (tap = next page)
+ *   POST /api/say       {"status":true} read the numbers out, or {"script":"..."}
+ *   POST /voice         raw voice pack (tools/make_voice.py) -> "voice" partition
  *   POST /ota           raw firmware .bin -> inactive slot, reboot (v1)
  *   GET  /api/screen.bmp  what the panel shows right now (3x, 24-bit BMP)
  *   GET  <anything else>  -> dashboard (captive portal in setup)
@@ -44,6 +46,7 @@
 #include "settings.h"
 #include "ui.h"
 #include "usage.h"
+#include "voice.h"
 
 static const char *TAG = "web";
 
@@ -278,6 +281,10 @@ static esp_err_t status_get(httpd_req_t *req)
     cJSON_AddNumberToObject(st, "blb", c.bl_batt);
     cJSON_AddNumberToObject(st, "blank", c.blank_s);
     cJSON_AddBoolToObject(st, "h24", c.h24);
+    cJSON_AddBoolToObject(st, "talk", c.talk);
+    cJSON *vo = cJSON_AddObjectToObject(r, "voice");
+    cJSON_AddStringToObject(vo, "name", voice_name());
+    cJSON_AddNumberToObject(vo, "clips", voice_clip_count());
     return send_json(req, r);
 }
 
@@ -355,7 +362,7 @@ static esp_err_t token_post(httpd_req_t *req)
 
     settings_set_token(tok);
     usage_poll_now();
-    app_sound(MELODY_TOKEN_SAVED);
+    app_say("token_new", MELODY_TOKEN_SAVED);
 
     /* Remember who feeds us tokens: that host gets the online-notify ping. */
     char ip[16];
@@ -393,10 +400,12 @@ static esp_err_t settings_post(httpd_req_t *req)
     if (cJSON_IsNumber(v = cJSON_GetObjectItem(j, "blb")))   c.bl_batt    = (uint8_t)v->valueint;
     if (cJSON_IsNumber(v = cJSON_GetObjectItem(j, "blank"))) c.blank_s    = (uint16_t)v->valueint;
     if (cJSON_IsBool(v = cJSON_GetObjectItem(j, "h24")))     c.h24        = cJSON_IsTrue(v);
+    if (cJSON_IsBool(v = cJSON_GetObjectItem(j, "talk")))    c.talk       = cJSON_IsTrue(v);
     bool test = cJSON_IsTrue(cJSON_GetObjectItem(j, "test"));
     cJSON_Delete(j);
     settings_put(&c);
-    if (test) audio_play_async(MELODY_BUTTON);      /* volume preview ignores mute */
+    /* volume preview ignores mute/quiet: the user just asked for it */
+    if (test && !(c.talk && audio_say_async("test"))) audio_play_async(MELODY_BUTTON);
     return send_ok(req, "saved");
 }
 
@@ -430,6 +439,56 @@ static esp_err_t button_post(httpd_req_t *req)
     g_btn_sim = (j && cJSON_IsTrue(cJSON_GetObjectItem(j, "long"))) ? 2 : 1;
     cJSON_Delete(j);
     return send_ok(req, "pressed");
+}
+
+/* Speak: {"status":true} reads the numbers, {"script":"..."} anything else. */
+static esp_err_t say_post(httpd_req_t *req)
+{
+    if (!auth_ok(req)) return deny(req);
+    char body[192];
+    if (read_body(req, body, sizeof(body)) < 0) return ESP_FAIL;
+    cJSON *j = cJSON_Parse(body);
+    cJSON *sc = j ? cJSON_GetObjectItem(j, "script") : NULL;
+    bool ok = true;
+    if (cJSON_IsString(sc)) ok = audio_say_async(sc->valuestring);
+    else usage_say_status();
+    cJSON_Delete(j);
+    if (!ok) { httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "no voice pack"); return ESP_FAIL; }
+    return send_ok(req, "speaking");
+}
+
+/* Voice pack upload: raw body straight into the "voice" partition. */
+static esp_err_t voice_post(httpd_req_t *req)
+{
+    if (!auth_ok(req)) return deny(req);
+    if (req->content_len <= 0 || !voice_write_begin(req->content_len)) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad length or no voice partition");
+        return ESP_FAIL;
+    }
+    static char buf[2048];          /* handlers are serialized -> static is safe */
+    int remaining = req->content_len, timeouts = 0;
+    while (remaining > 0) {
+        int r = httpd_req_recv(req, buf, MIN(remaining, (int)sizeof(buf)));
+        if (r == HTTPD_SOCK_ERR_TIMEOUT) {
+            if (++timeouts > 5) { httpd_resp_send_err(req, HTTPD_408_REQ_TIMEOUT, "recv timeout"); return ESP_FAIL; }
+            continue;
+        }
+        timeouts = 0;
+        if (r <= 0 || !voice_write(buf, r)) {
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "write failed");
+            return ESP_FAIL;
+        }
+        remaining -= r;
+    }
+    if (!voice_write_end()) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "not a voice pack");
+        return ESP_FAIL;
+    }
+    char msg[64];
+    snprintf(msg, sizeof(msg), "voice \"%s\" installed, %d clips\n", voice_name(), voice_clip_count());
+    httpd_resp_sendstr(req, msg);
+    audio_say_async("test");
+    return ESP_OK;
 }
 
 static esp_err_t poll_post(httpd_req_t *req)
@@ -505,7 +564,7 @@ void web_start(void)
     cfg.server_port      = 80;
     cfg.stack_size       = 10240;
     cfg.lru_purge_enable = true;
-    cfg.max_uri_handlers = 12;
+    cfg.max_uri_handlers = 16;
     cfg.uri_match_fn     = httpd_uri_match_wildcard;
     if (httpd_start(&s_srv, &cfg) != ESP_OK) {
         ESP_LOGE(TAG, "httpd_start failed");
@@ -521,6 +580,8 @@ void web_start(void)
         { "/api/wifi",     HTTP_POST, wifi_post,     NULL },
         { "/api/poll",     HTTP_POST, poll_post,     NULL },
         { "/api/button",   HTTP_POST, button_post,   NULL },
+        { "/api/say",      HTTP_POST, say_post,      NULL },
+        { "/voice",        HTTP_POST, voice_post,    NULL },
         { "/ota",          HTTP_POST, ota_post,      NULL },
         { "/*",            HTTP_GET,  page_get,      NULL },   /* captive portal */
     };

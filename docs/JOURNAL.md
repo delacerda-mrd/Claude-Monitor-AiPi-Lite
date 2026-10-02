@@ -8,7 +8,8 @@
 
 ## Current Status (updated 2026-10-02)
 
-**Phase:** **v2 refresh deployed** (fw 2.0.0, running on the device via OTA). Mac is
+**Phase:** **v2.1 deployed** (fw 2.1.0, USB-flashed for the new `voice` partition) —
+the meter now talks (Daniel voice pack installed). Mac is
 now the only machine — the Linux box is retired; toolchain + token pipeline moved here.
 
 **Known working (verified on hardware 2026-10-02):** v2 boots without `secrets.h`
@@ -43,6 +44,15 @@ min ~91–100 KB (59 KB under a screenshot burst). Details: BRINGUP Phase 7.
 ---
 
 ## Session Log (newest first)
+
+### 2026-10-02 (Mac, later) — v2.1: it talks; RINGS caption removed
+**User:** "remove the word Session from the rings. the tones suck… it has a speaker. can it
+'talk' to me?" — Done: caption gone (verified by screenshot). Speech: macOS `say` renders
+127 clips (sentences + numbers 0–100 as whole words) at 24 kHz → µ-law pack (2.4 MB) in a
+new 4 MB `voice` partition, uploaded over HTTP. `voice.c` composes scripts and streams
+from flash; tones remain the fallback (Talk setting / no pack). Hold-to-refresh now reads
+the status aloud. Partition change → one USB flash (`tools/idf.sh flash`); NVS kept its
+offset so token + Wi-Fi survived. Not yet heard by a human.
 
 ### 2026-10-02 (Mac) — v2: modern refresh, Mac takeover, token-free polling
 **Goal (user):** "review this project … needs a modern refresh … sleek modern version

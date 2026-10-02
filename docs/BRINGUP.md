@@ -107,4 +107,10 @@ Verified via serial log, `/api/status` and `/api/screen.bmp` (exact panel input)
 - [~] Physical button: tap = next page, hold ≥0.6 s = refresh (+ tick), press while blank = wake only
 - [~] Backlight fade-in at boot; blank after 3 min, wake on press
 - [~] New tones (window reset, setup) and the volume / mute / quiet-hours settings
+### Voice (v2.1)
+- [x] USB flash with the new partition table; token + Wi-Fi survived (NVS offset unchanged)
+- [x] `POST /voice` installs the Daniel pack (2.4 MB in 15 s): `voice pack "Daniel": 127 clips`
+- [x] `POST /api/say` status runs with no audio errors in the log
+- [~] **Speech is audible and clean** (no buzz at the end, sensible volume) — confirm by ear
+- [~] Hold-to-refresh announces; event phrases (threshold, token, reset) fire
 - [~] On battery: 15 % backlight, 300 s polls, battery icon level

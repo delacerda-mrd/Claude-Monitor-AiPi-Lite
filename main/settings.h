@@ -21,6 +21,7 @@ typedef struct {
     uint8_t  bl_batt;       /* backlight % on battery                        */
     uint16_t blank_s;       /* screen blank after idle seconds, 0 = never    */
     bool     h24;           /* 24-hour clock                                 */
+    bool     talk;          /* spoken announcements (else tones)             */
     char     notify_ip[16]; /* host that last pushed a token (online-notify) */
 } settings_t;
 

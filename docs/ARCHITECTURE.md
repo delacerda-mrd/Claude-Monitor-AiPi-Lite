@@ -28,7 +28,8 @@ going; a web dashboard at `http://claude-meter.local/` mirrors it all.
 | `power.c` | battery ADC, external-power detection, backlight PWM, screen blanking |
 | `led.c` | WS2812 status pixel |
 | `settings.c` | NVS settings + token (namespace `cfg`, token key unchanged from v1) |
-| `audio.c` | ES8311 + tones; async queue + volume (v1 code + additions) |
+| `audio.c` | ES8311 + tones; async queue (melodies + speech jobs), streaming API, volume |
+| `voice.c` | speech: clip-pack index from the `voice` partition, script → clips, µ-law streaming |
 | `fonts/` | JetBrains Mono (OFL, generated) + Styrene (from HY3, patched for LVGL 8) |
 
 ## Threading (load-bearing)
@@ -102,7 +103,7 @@ charge bolt (external power) · battery (white; amber ≤30 %, red ≤15 %, gree
 
 | Page | Content |
 |------|---------|
-| **RINGS** (home) | Concentric rings — outer 5 h, inner 7 d — level-colored, tracks tinted; count-up session % in the middle with its reset countdown (or `token?`/`offline`); corners: 7 d % and 7 d reset |
+| **RINGS** (home) | Concentric rings — outer 5 h, inner 7 d — level-colored, tracks tinted; count-up session % in the middle (no caption) with its reset countdown (or `token?`/`offline`); corners: 7 d % and 7 d reset |
 | **PACE** | A card per window: %, bar with an **even-pace marker** (where usage would be if spent evenly), reset countdown, pace verdict (`+12 ahead` / `on pace` / `8 under`) |
 | **TREND** | 5 h chart of session (coral, gradient fill) + weekly (grey), live point at the right; projection `proj 87%` or, if on course to cap, `max @3:40` |
 | **CLAWD** | Clawd mood: dance-sway "All clear" (<25 %), coding "Cooking", thinking "Pace yourself" (≥60), surprise "Whoa there" (≥85), sleep "Rate limited" (≥100, with time to reset), look-around "Need a token"/"Offline", bounce "Fresh window!" after a reset |
@@ -114,7 +115,8 @@ Level colors: sage < 60 % ≤ amber < 85 % ≤ red. Palette = HY3 theme (Anthrop
 ## Button (GPIO42, polled 10 ms, 30 ms debounce)
 - Screen off → any press only wakes it.
 - **Tap** → next page (slide). **Hold ≥ 600 ms** → poll now (tick sound, spinner,
-  jumps to RINGS).
+  jumps to RINGS) and then **speak the result** ("Session at 57 percent. Resets in 2
+  hours 43 minutes. Weekly at 17 percent. You're on pace.").
 
 ## Backlight, blanking, power
 - LEDC PWM GPIO3, 5 kHz, 8-bit. Brightness from settings: default **80 % on external
@@ -128,26 +130,47 @@ Level colors: sage < 60 % ≤ amber < 85 % ≤ red. Palette = HY3 theme (Anthrop
 Boot blue · green / amber / red by the worse window · red on error · **slow red
 breathe at ≥ 100 %** · **slow blue breathe in setup mode**.
 
-## Audio
-Routine polls silent. Boot C–E–G · hold-refresh C7 tick · token saved C–F · cross 60 %
-G–C · cross 85 % three beeps · error E–C · window reset C–E–G–C · setup AP up G–D.
-Volume (default 70), mute and **quiet hours** (off by default) are settings.
+## Audio & voice (v2.1)
+The meter **talks**. A clip pack built on the Mac with `say` (`tools/make_voice.py`,
+default voice Daniel, 24 kHz µ-law, 127 clips ≈ 106 s ≈ 2.4 MB) lives in the `voice`
+partition and is uploaded with `POST /voice` (no USB). `voice.c` turns a script — clip
+names, `#N` (0–100 as one word), `~S` (duration), `.` (pause) — into clips and streams
+them from flash through `audio_stream_*()` on the audio task.
+
+| Event | Says (tone if Talk is off / no pack) |
+|---|---|
+| Online at boot | "Claude Meter online." (C–E–G) |
+| Token pushed | "New token received." (C–F) |
+| Token rejected | "My token expired. Asking your Mac for a fresh one." (E–C) |
+| Network lost / back | "Connection lost." (E–C) / "Back online." |
+| Cross 60 % / 85 % | "Heads up. Session at 61 percent." / "Warning. Weekly at 87 percent." |
+| Cross 100 % | "You've hit the limit. Back in 1 hour 20 minutes." |
+| Window reset | "Fresh window. Usage reset." (C–E–G–C) |
+| Setup AP up | "Setup mode. Scan the code on my screen to connect." (G–D) |
+| Hold the button | the full status (above); a C7 tick first |
+
+Routine polls stay silent. Settings: **Talk** (default on), volume (default 70), mute,
+quiet hours (off by default) — mute/quiet silence speech too. Dashboard "Say status"
+= `POST /api/say`. The end of every stream is flushed with ~120 ms of silence because
+the I2S channel runs with `auto_clear` off (else the DMA ring replays as a buzz).
 
 ## Web (`http://claude-meter.local/`)
 `GET /` dashboard (rings, pace, 5 h chart, device, settings, token, Wi-Fi, OTA upload) ·
 `GET /api/status` JSON (usage, history, device incl. heap stats, settings) ·
 `GET /api/screen.bmp` exact panel contents (3×) · `POST /` token (form) ·
 `POST /api/settings` JSON patch · `POST /api/wifi` `{ssid,pass}` (reboots) ·
-`POST /api/poll` · `POST /ota` raw `.bin`. Any other GET → dashboard (captive portal).
+`POST /api/poll` · `POST /api/button` · `POST /api/say` · `POST /voice` raw pack ·
+`POST /ota` raw `.bin`. Any other GET → dashboard (captive portal).
 All POSTs require `X-Auth` when `CFG_AUTH_SECRET` is compiled in (the dashboard prompts
 once and remembers it).
 
 ## Settings (NVS `cfg`)
 `tz` (POSIX, default US Eastern) · `vol` · `mute` · `quiet` + `q_from`/`q_to` ·
-`bl_usb` / `bl_batt` (%) · `blank_s` · `h24` · `notify_ip` · `token`.
+`bl_usb` / `bl_batt` (%) · `blank_s` · `h24` · `talk` · `notify_ip` · `token`.
 
 ## OTA & rollback (unchanged from v1)
-Two 2 MB slots. `POST /ota` streams into the inactive slot, verifies, flips, reboots.
+Two 2 MB slots (plus the 4 MB `voice` data partition at 0x420000, added in v2.1 — the
+one change that needed a USB flash; OTA never touches it). `POST /ota` streams into the inactive slot, verifies, flips, reboots.
 `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`: an OTA image is confirmed after **15 s online**
 (boot stage ≥ FETCH, never in setup mode); a crash before that rolls back on the next
 reset. USB flashes are never rolled back (recovery path).

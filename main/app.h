@@ -52,6 +52,10 @@ extern volatile int g_btn_sim;
 /* Play a sound unless muted / inside quiet hours. Non-blocking. */
 void app_sound(melody_type_t m);
 
+/* Speak a voice script (voice.h format) unless muted / quiet; falls back to
+ * the tone when talking is off or no voice pack is installed. Non-blocking. */
+void app_say(const char *script, melody_type_t fallback);
+
 /* Screenshot for the web API (httpd task). Blocks until the main loop has
  * re-rendered a full frame into malloc'd horizontal strips of lv_color_t
  * (16-bit, LVGL byte order), *rows rows each. Caller frees every strip.

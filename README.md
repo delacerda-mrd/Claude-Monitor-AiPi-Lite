@@ -10,7 +10,7 @@ LED, a speaker and a LiPo battery round it out.
 
 ## What's on the screen
 
-A tap cycles the pages; holding the button (≥ 0.6 s) refreshes now.
+A tap cycles the pages; holding the button (≥ 0.6 s) refreshes and reads the result aloud.
 
 | Page | Shows |
 |---|---|
@@ -118,7 +118,7 @@ Wi-Fi change, firmware upload, *Next page* and *Screenshot*.
 
 API: `GET /api/status` · `GET /api/screen.bmp` · `POST /` (`token=`) ·
 `POST /api/settings` · `POST /api/wifi` · `POST /api/poll` · `POST /api/button` ·
-`POST /ota`.
+`POST /api/say` · `POST /voice` · `POST /ota`.
 
 > **⚠️ Security:** without `CFG_AUTH_SECRET`, anyone on your LAN can read usage,
 > change settings, replace the token or flash firmware. Fine on a trusted home
@@ -131,11 +131,29 @@ Two 2 MB OTA slots. An uploaded image boots on trial and confirms itself after 1
 online; if it crashes or can't get online first, the next reset rolls back to the
 previous image. USB flashing is never rolled back (it's the recovery path).
 
-## Sounds & lights
+## It talks
 
-Routine polls are silent. Boot C–E–G · refresh tick · token saved C–F · crossing
-60 % G–C · crossing 85 % three beeps · error E–C · window reset C–E–G–C · setup AP up
-G–D. The LED (very dim) is green / amber / red by the busier window, red on errors,
+The meter speaks through its speaker: "Claude Meter online", "Heads up. Session at
+sixty one percent", "You've hit the limit. Back in one hour twenty minutes", "Fresh
+window", "My token expired — asking your Mac for a fresh one". **Hold the button** and
+it reads you everything: session, time to reset, weekly, and whether you're on pace.
+
+The voice is a clip pack recorded on your Mac with `say`, stored in its own flash
+partition, swappable over Wi-Fi:
+
+```bash
+tools/make_voice.py --audition "Session at forty two percent." --voice Daniel   # hear it on the Mac
+tools/make_voice.py --voice Daniel                                             # build build/voice.bin
+curl --data-binary @build/voice.bin http://claude-meter.local/voice            # install (it says hi)
+```
+
+`say -v '?'` lists voices (Daniel, Samantha, Karen, Moira… or the robots: Zarvox,
+Trinoids, Ralph). Turn *Talk* off in the dashboard to get the old tones back; mute
+and quiet hours silence both.
+
+## Lights
+
+The LED (very dim) is green / amber / red by the busier window, red on errors,
 breathes red at the limit and blue in setup mode.
 
 ## Hardware

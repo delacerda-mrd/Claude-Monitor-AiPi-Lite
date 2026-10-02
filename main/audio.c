@@ -27,6 +27,7 @@
 #include "driver/gpio.h"
 #include "es8311.h"
 #include "esp_log.h"
+#include "voice.h"
 
 static const char *TAG = "audio";
 
@@ -134,8 +135,16 @@ static const note_t melody_setup[] = {
     {NOTE_G4, 200}, {NOTE_D5, 260},
 };
 
+/* Audio task job: a melody, or a spoken script. */
+typedef struct {
+    bool          speech;
+    melody_type_t melody;
+    char          script[120];
+} audio_job_t;
+
 static QueueHandle_t audio_q = NULL;
 static void audio_task(void *arg);
+static void apply_pending_volume(void);
 static int pending_volume = -1;     /* applied under audio_mutex before playback */
 
 /* ------------------------------------------------------------------ */
@@ -357,8 +366,8 @@ esp_err_t audio_init(void)
     /* Idle until first playback — stops MCLK and mutes the codec. */
     audio_suspend();
 
-    audio_q = xQueueCreate(4, sizeof(melody_type_t));
-    if (audio_q) xTaskCreate(audio_task, "audio", 3072, NULL, 3, NULL);
+    audio_q = xQueueCreate(4, sizeof(audio_job_t));
+    if (audio_q) xTaskCreate(audio_task, "audio", 4096, NULL, 3, NULL);
 
     ESP_LOGI(TAG, "audio subsystem ready");
     return ESP_OK;
@@ -466,10 +475,7 @@ void audio_play_melody(melody_type_t type)
 
     /* Volume changes are deferred to here: the codec only answers I2C
      * while MCLK runs, which is only true between resume and suspend. */
-    if (pending_volume >= 0 && es_handle) {
-        es8311_voice_volume_set(es_handle, pending_volume, NULL);
-        pending_volume = -1;
-    }
+    apply_pending_volume();
     for (int i = 0; i < count; i++) {
         if (notes[i].freq == REST) {
             vTaskDelay(pdMS_TO_TICKS(notes[i].dur_ms));
@@ -486,20 +492,71 @@ void audio_play_melody(melody_type_t type)
 /* Async playback + volume                                              */
 /* ------------------------------------------------------------------ */
 
+static void apply_pending_volume(void)
+{
+    if (pending_volume >= 0 && es_handle) {
+        es8311_voice_volume_set(es_handle, pending_volume, NULL);
+        pending_volume = -1;
+    }
+}
+
 static void audio_task(void *arg)
 {
     (void)arg;
-    melody_type_t m;
+    static audio_job_t job;             /* big-ish; keep it off the stack */
     for (;;) {
-        if (xQueueReceive(audio_q, &m, portMAX_DELAY) == pdTRUE)
-            audio_play_melody(m);
+        if (xQueueReceive(audio_q, &job, portMAX_DELAY) != pdTRUE) continue;
+        if (!job.speech) { audio_play_melody(job.melody); continue; }
+        if (xSemaphoreTake(audio_mutex, pdMS_TO_TICKS(500)) != pdTRUE) continue;
+        audio_resume();
+        apply_pending_volume();
+        voice_play_script(job.script);
+        audio_suspend();
+        xSemaphoreGive(audio_mutex);
     }
 }
 
 void audio_play_async(melody_type_t type)
 {
     if (!audio_q) return;
-    xQueueSend(audio_q, &type, 0);
+    audio_job_t job = { .speech = false, .melody = type };   /* copied by the queue */
+    xQueueSend(audio_q, &job, 0);
+}
+
+bool audio_say_async(const char *script)
+{
+    if (!audio_q || !voice_ready() || !script) return false;
+    audio_job_t local = { .speech = true };
+    strncpy(local.script, script, sizeof(local.script) - 1);
+    xQueueSend(audio_q, &local, 0);
+    return true;
+}
+
+/* ---- streaming (audio task, under audio_mutex, codec resumed) ---- */
+void audio_stream_begin(void)
+{
+    if (tx_enabled) { i2s_channel_disable(tx_handle); tx_enabled = false; }
+    pa_set(true);
+    vTaskDelay(pdMS_TO_TICKS(5));
+    i2s_channel_enable(tx_handle);
+    tx_enabled = true;
+}
+
+void audio_stream_write(const int16_t *stereo, size_t frames)
+{
+    size_t done = 0;
+    i2s_channel_write(tx_handle, stereo, frames * 2 * sizeof(int16_t), &done, pdMS_TO_TICKS(1000));
+}
+
+void audio_stream_end(void)
+{
+    /* auto_clear is off: the DMA ring would replay its last buffers as a
+     * buzz. Flush it with ~120 ms of silence before cutting the amp. */
+    static const int16_t zeros[256 * 2];
+    for (int i = 0; i < 12; i++) audio_stream_write(zeros, 256);
+    pa_set(false);
+    i2s_channel_disable(tx_handle);
+    tx_enabled = false;
 }
 
 void audio_set_volume(int vol)

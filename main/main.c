@@ -38,6 +38,7 @@
 #include "settings.h"
 #include "ui.h"
 #include "usage.h"
+#include "voice.h"
 
 static const char *TAG = "main";
 
@@ -56,8 +57,17 @@ volatile int g_btn_sim;
 /* ------------------------------------------------------------------ */
 void app_sound(melody_type_t m)
 {
-    if (settings_quiet_now()) return;
+    if (settings_quiet_now() || m == MELODY_NONE) return;
     audio_play_async(m);
+}
+
+void app_say(const char *script, melody_type_t fallback)
+{
+    if (settings_quiet_now()) return;
+    settings_t c;
+    settings_get(&c);
+    if (c.talk && audio_say_async(script)) return;
+    if (fallback != MELODY_NONE) audio_play_async(fallback);
 }
 
 /* ------------------------------------------------------------------ */
@@ -220,7 +230,7 @@ static void button_poll(void)
     if (sim) {                                  /* remote press from the web API */
         g_btn_sim = 0;
         screen_wake();
-        if (sim == 2) { usage_poll_now(); app_sound(MELODY_BUTTON); ui_button_long(); }
+        if (sim == 2) { usage_announce_next(); usage_poll_now(); app_sound(MELODY_BUTTON); ui_button_long(); }
         else          ui_button_short();
         return;
     }
@@ -244,7 +254,8 @@ static void button_poll(void)
 
     if (down && !wake_only && !long_fired && now - t_down > LONG_PRESS_MS * 1000) {
         long_fired = true;
-        ESP_LOGI(TAG, "long press: refresh");
+        ESP_LOGI(TAG, "long press: refresh + announce");
+        usage_announce_next();          /* speak the result of this poll */
         usage_poll_now();
         app_sound(MELODY_BUTTON);
         ui_button_long();
@@ -301,6 +312,7 @@ void app_main(void)
 
     if (audio_init() != ESP_OK)
         ESP_LOGW(TAG, "audio init failed - continuing without sound");
+    voice_init();                   /* tones if no pack is installed */
     button_init();
     power_sample();
     net_start();
