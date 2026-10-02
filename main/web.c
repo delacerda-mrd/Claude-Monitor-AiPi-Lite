@@ -275,8 +275,8 @@ static esp_err_t status_get(httpd_req_t *req)
     cJSON_AddNumberToObject(hwj, "psram_free", heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
     cJSON_AddNumberToObject(hwj, "internal_free", heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
     cJSON_AddNumberToObject(hwj, "gpio1", gpio_get_level(PIN_BTN_PWR));
-    cJSON_AddNumberToObject(hwj, "gpio8", gpio_get_level(PIN_CHG_DET));
-    cJSON_AddNumberToObject(hwj, "gpio21", gpio_get_level(PIN_PROBE_21));
+    cJSON_AddNumberToObject(hwj, "gpio8", gpio_get_level(PIN_VBUS));
+    cJSON_AddNumberToObject(hwj, "gpio21", gpio_get_level(PIN_CHRG));
     cJSON_AddNumberToObject(hwj, "gpio42", gpio_get_level(PIN_BTN));
 
     cJSON *st = cJSON_AddObjectToObject(r, "set");

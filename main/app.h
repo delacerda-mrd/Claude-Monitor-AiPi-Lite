@@ -38,7 +38,8 @@ typedef struct {
     volatile bool   wifi_up;
     volatile int    rssi;               /* dBm, 0 = unknown                 */
     volatile int    batt_pct;           /* -1 = unknown                     */
-    volatile bool   ext_power;          /* USB host or wall charger         */
+    volatile bool   ext_power;          /* USB power present (GPIO8)        */
+    volatile bool   charging;           /* charger active (GPIO21 low)      */
     char            ip[16];
     char            ssid[33];
     char            ap_ssid[33];        /* setup AP name when BOOT_SETUP    */

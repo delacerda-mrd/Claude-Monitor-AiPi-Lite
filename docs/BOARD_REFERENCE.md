@@ -61,7 +61,9 @@ CYD/ES3C28P quirks over.
 ## 5. Input — Button
 | Parameter | Value |
 |-----------|-------|
-| Button | GPIO 42, active-low, GPIO ISR. Forces a poll (or wakes a blanked screen). `(firmware, verified)` |
+| Right button | GPIO 42, active-low. `(firmware, verified)` |
+| Left button | **GPIO 1**, active-low, pull-up — the stock firmware's "power button" (tap = wake, hold = power off). Pulled low live on press. `(verified on hardware 2026-10-02)` |
+| BOOT button | GPIO 0, under the back cover next to the module (community photo) — only for a failed USB flash. |
 
 ## 6. RGB LED
 | Parameter | Value |
@@ -88,26 +90,35 @@ CYD/ES3C28P quirks over.
 ## 9. Power hold
 | Parameter | Value |
 |-----------|-------|
-| Hold pin | GPIO 10 — driven high in `app_main` to keep the board powered on battery (latching power circuit). `(firmware, verified)` |
+| Hold pin | GPIO 10 — driven high in `app_main` to keep the board powered on battery (soft latch, Q1–Q7). Driving it low on battery cuts power (stock fw: `rtc_gpio` low + deep sleep). `(firmware, verified)` |
+| USB power sense | **GPIO 8** — 1 = USB plugged in, 0 = on battery; changes instantly. Stock fw `POWER_CHARGE_DETECT_PIN`. `(verified on hardware 2026-10-02: unplug → 0, replug → 1)` |
+| Charger CHRG | **GPIO 21** — 0 while the Li-ion charger is charging, 1 when idle/full. Went 0 on USB re-insert (cycle restart) and back to 1 minutes later on a full cell. 4056-class charger (U5). `(observed on hardware 2026-10-02)` |
 
 ## 10. Complete GPIO Allocation Table `(firmware)`
 | GPIO | Function | Notes |
 |------|----------|-------|
+| 0 | BOOT button | under the cover; strapping |
+| 1 | Left button | active-low, pull-up (verified 2026-10-02) |
 | 2 | Battery ADC (ADC1_CH1) | input, analog |
 | 3 | Display backlight | LEDC PWM |
 | 4 | I2C SCL (ES8311) | |
 | 5 | I2C SDA (ES8311) | |
 | 6 | I2S MCLK | |
 | 7 | Display DC | |
+| 8 | USB power sense | 1 = plugged (verified 2026-10-02) |
 | 9 | Speaker amp enable | active per codec bring-up |
 | 10 | Power hold | drive high to stay alive on battery |
 | 11 | I2S DOUT | |
 | 12 | I2S WS | |
+| 13 | I2S DIN (mic, ES8311 ADC) | stock fw; not yet used |
 | 14 | I2S BCLK | |
 | 15 | Display CS | |
 | 16 | Display SCLK | |
 | 17 | Display MOSI | |
 | 18 | Display RST | |
+| 19 / 20 | USB D− / D+ | native USB-Serial-JTAG |
+| 21 | Charger CHRG | 0 = charging (observed 2026-10-02) |
+| 33–37 | Octal PSRAM | internal to the N16R8 — never use |
 | 42 | Button | active-low, ISR |
 | 46 | WS2812 LED | single pixel |
 
@@ -139,6 +150,13 @@ boot; the firmware drives it without issue `(verified on hardware)`.
   minimum free heap hit 13 KB. `CONFIG_LV_MEM_CUSTOM=y` + `CONFIG_MBEDTLS_DYNAMIC_BUFFER`
   (+ free config/CA) brought it to ~100 KB min / 113 KB free. Contiguous blocks stay
   < 32 KB once networking is up — allocate big buffers in strips. Added 2026-10-02.
+- **v1's "external power" detection was wrong on battery.** `usb_serial_jtag_is_connected()`
+  OR a voltage-trend heuristic kept reporting external power after unplugging (a full
+  cell pins the ADC at the top). Use GPIO8. Added 2026-10-02.
+- **Sources disagree; trust the stock board file + measurement.** Lipe's teardown labels
+  GPIO1 "battery sensor" (it's the left button) and GPIO21 "ES8311 charge counter"
+  (it's the charger CHRG); ESPHome's port says the left button "isn't on a GPIO" (it is).
+  Stock xiaozhi drives the panel as ST7789 @ 40 MHz; ST7735 driver works too. Added 2026-10-02.
 - **Opening the USB-Serial-JTAG port from macOS resets the chip** (pyserial with DTR/RTS
   set False before open still resets). Expect a reboot when attaching a logger. Added
   2026-10-02.

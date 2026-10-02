@@ -223,7 +223,7 @@ static void capture_service(void)
 static void button_init(void)
 {
     gpio_config_t io = {
-        .pin_bit_mask = 1ULL << PIN_BTN,
+        .pin_bit_mask = (1ULL << PIN_BTN) | (1ULL << PIN_BTN_PWR),
         .mode         = GPIO_MODE_INPUT,
         .pull_up_en   = GPIO_PULLUP_ENABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
@@ -273,6 +273,45 @@ static void button_poll(void)
         usage_poll_now();
         app_sound_now(MELODY_BUTTON);
         ui_button_long();
+    }
+}
+
+/* Left button (GPIO1): tap = previous page; hold 3 s on battery = power off. */
+#define POWER_OFF_MS 3000
+static void button_left_poll(void)
+{
+    static bool    down, fired, wake_only;
+    static int     stable;
+    static int64_t t_down;
+    bool pressed = gpio_get_level(PIN_BTN_PWR) == 0;
+    int64_t now = esp_timer_get_time();
+
+    if (pressed != down) {
+        if (++stable < 3) return;
+        stable = 0;
+        down = pressed;
+        if (down) {
+            t_down = now;
+            fired = false;
+            wake_only = !screen_is_on();
+            screen_wake();
+        } else if (!wake_only && !fired) {
+            ui_button_prev();
+        }
+        return;
+    }
+    stable = 0;
+    if (down && !fired && now - t_down > POWER_OFF_MS * 1000) {
+        fired = true;
+        if (g_sys.ext_power) {
+            ESP_LOGI(TAG, "left hold: on USB, staying on");
+            return;
+        }
+        ui_goodbye();
+        led_show(LED_OFF);
+        led_tick();
+        vTaskDelay(pdMS_TO_TICKS(1200));        /* let "Goodbye" be seen */
+        power_off();
     }
 }
 
@@ -358,6 +397,7 @@ void app_main(void)
         last_tick_us = now - (now - last_tick_us) % 1000;
 
         button_poll();
+        button_left_poll();
         ui_tick();
         lv_timer_handler();
         capture_service();

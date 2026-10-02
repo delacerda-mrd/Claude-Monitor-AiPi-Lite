@@ -234,7 +234,7 @@ static void sb_layout(void)
     for (int i = 0; i < 3; i++) {
         lv_obj_t *o = seq[i];
         if (lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) continue;
-        lv_coord_t w = o == s_sb.bolt ? 7 : o == s_sb.wifi ? 13 : 9;
+        lv_coord_t w = o == s_sb.bolt ? lv_obj_get_width(o) : o == s_sb.wifi ? 13 : 9;
         x -= w;
         lv_obj_set_pos(o, x, o == s_sb.spin ? 2 : 1);
         x -= 3;
@@ -267,8 +267,13 @@ static void sb_update(bool polling)
     uint32_t wc = !g_sys.wifi_up ? C_HIGH : (rssi && rssi < -78) ? C_WARN : C_TEXT;
     set_color(s_sb.wifi, HEX(wc));
 
-    if (g_sys.ext_power) lv_obj_clear_flag(s_sb.bolt, LV_OBJ_FLAG_HIDDEN);
-    else                 lv_obj_add_flag(s_sb.bolt, LV_OBJ_FLAG_HIDDEN);
+    /* bolt while charging, plug when on USB with a full battery */
+    if (g_sys.ext_power) {
+        set_text(s_sb.bolt, g_sys.charging ? LV_SYMBOL_CHARGE : LV_SYMBOL_USB);
+        lv_obj_clear_flag(s_sb.bolt, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(s_sb.bolt, LV_OBJ_FLAG_HIDDEN);
+    }
 
     sb_layout();
 
@@ -276,7 +281,7 @@ static void sb_update(bool polling)
     int w = pct < 0 ? 0 : (pct * 11 + 50) / 100;
     if (w < 1) w = 1;
     lv_obj_set_width(s_sb.batt_fill, w);
-    uint32_t fc = g_sys.ext_power ? C_OK : pct <= 15 ? C_HIGH : pct <= 30 ? C_WARN : C_TEXT;
+    uint32_t fc = g_sys.charging ? C_OK : pct <= 15 ? C_HIGH : pct <= 30 ? C_WARN : C_TEXT;
     lv_obj_set_style_bg_color(s_sb.batt_fill, HEX(fc), 0);
 }
 
@@ -903,6 +908,24 @@ void ui_button_short(void)
 {
     if (s_mode != MODE_PAGES) return;
     go_page((s_page + 1) % PAGE_COUNT, LV_SCR_LOAD_ANIM_MOVE_LEFT);
+}
+
+void ui_button_prev(void)
+{
+    if (s_mode != MODE_PAGES) return;
+    go_page((s_page + PAGE_COUNT - 1) % PAGE_COUNT, LV_SCR_LOAD_ANIM_MOVE_RIGHT);
+}
+
+void ui_goodbye(void)
+{
+    lv_obj_t *s = mk_screen();
+    lv_obj_t *c = clawd_create(s, 4, HEX(C_BG));
+    if (c) { lv_obj_align(c, LV_ALIGN_TOP_MID, 0, 14); clawd_play(c, CLAWD_SLEEP); }
+    lv_obj_t *t = mk_label(s, F_TITLE, C_TEXT, "Goodbye");
+    lv_obj_align(t, LV_ALIGN_TOP_MID, 0, 100);
+    if (s_sb.bar) lv_obj_add_flag(s_sb.bar, LV_OBJ_FLAG_HIDDEN);
+    lv_scr_load(s);
+    lv_refr_now(NULL);
 }
 
 void ui_button_long(void)

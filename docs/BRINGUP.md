@@ -107,6 +107,14 @@ Verified via serial log, `/api/status` and `/api/screen.bmp` (exact panel input)
 - [~] Physical button: tap = next page, hold ≥0.6 s = refresh (+ tick), press while blank = wake only
 - [~] Backlight fade-in at boot; blank after 3 min, wake on press
 - [~] New tones (window reset, setup) and the volume / mute / quiet-hours settings
+### Board deep-dive (v2.1, 2026-10-02)
+- [x] PSRAM: 8 MB octal enabled — `/api/status` hw.psram = 8388608, heap 8.4 MB
+- [x] LCD at 40 MHz (stock clock) renders cleanly (screenshots)
+- [x] Left button = GPIO1 active-low (live capture 02:19:18)
+- [x] GPIO8 = USB power sense (unplug → 0, replug → 1); now drives ext_power
+- [x] GPIO21 = charger CHRG (0 after replug, back to 1 on the full cell); status bar plug/bolt
+- [~] Left-button hold 3 s on battery → power off, and left button powers back on
+- [~] Battery mode now actually engages on unplug (15 % backlight, 300 s polls)
 ### Voice (v2.1)
 - [x] USB flash with the new partition table; token + Wi-Fi survived (NVS offset unchanged)
 - [x] `POST /voice` installs the Daniel pack (2.4 MB in 15 s): `voice pack "Daniel": 127 clips`

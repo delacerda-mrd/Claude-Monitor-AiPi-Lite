@@ -17,7 +17,10 @@ then reflect anything session-relevant here.
 |----------|------|-------|
 | Display (ST7735 128×128) | SCLK16 MOSI17 CS15 DC7 RST18 BL3 | SPI 27 MHz; inversion OFF; BL = LEDC PWM |
 | WS2812 LED | 46 | single pixel; strapping pin, OK as output post-boot |
-| Button | 42 | active-low, ISR, force-poll / screen-wake |
+| Right button | 42 | active-low; tap = next page, hold = refresh + spoken status |
+| Left button | 1 | active-low; tap = previous page, hold 3 s on battery = power off |
+| USB power sense | 8 | 1 = plugged in |
+| Charger CHRG | 21 | 0 = charging |
 | Battery ADC | 2 | ADC1_CH1, 12-bit / 11 dB, divider |
 | Power hold | 10 | drive high to stay alive on battery |
 | ES8311 codec (I2C) | SDA5 SCL4 | |

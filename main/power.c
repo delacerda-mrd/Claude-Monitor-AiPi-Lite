@@ -2,17 +2,19 @@
  * power.c  --  battery ADC (GPIO2 / ADC1_CH1), external-power detection,
  * backlight PWM (GPIO3, LEDC) and the screen-blank manager.
  *
- * The battery table and the wall-charger voltage-trend heuristic are carried
- * over unchanged from v1 (calibrated on this unit -- see BOARD_REFERENCE §8).
+ * The battery table is carried over from v1 (calibrated on this unit -- see
+ * BOARD_REFERENCE §8). Power source / charging come from GPIO8 / GPIO21.
  */
 #include "power.h"
 
 #include "esp_log.h"
+#include "esp_sleep.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
 #include "driver/gpio.h"
 #include "driver/ledc.h"
-#include "driver/usb_serial_jtag.h"
 #include "esp_adc/adc_oneshot.h"
 
 #include "app.h"
@@ -25,16 +27,14 @@ static const char *TAG = "power";
 /* Battery + power source (poll task)                                  */
 /* ------------------------------------------------------------------ */
 static adc_oneshot_unit_handle_t s_adc;
-static int  s_prev_avg;
 static int  s_avg;
-static bool s_charger_trend;
 
 void power_init(void)
 {
     /* Probe inputs (see board.h). Plain inputs are harmless whatever is
      * actually wired there; the button gets a pull-up like the stock fw. */
     gpio_config_t in = {
-        .pin_bit_mask = (1ULL << PIN_CHG_DET) | (1ULL << PIN_PROBE_21),
+        .pin_bit_mask = (1ULL << PIN_VBUS) | (1ULL << PIN_CHRG),
         .mode = GPIO_MODE_INPUT,
     };
     gpio_config(&in);
@@ -85,12 +85,6 @@ static void batt_update(void)
     /* EMA smooths low-battery noise that could look like a charge curve */
     s_avg = s_avg == 0 ? raw : (s_avg * 3 + raw) / 4;
 
-    /* Wall-charger detection from the voltage trend: rising, or pinned at
-     * the top (a resting battery drops >2 pts/cycle and exits this). */
-    bool charging   = (s_prev_avg > 0) && (s_avg > s_prev_avg + 8);
-    bool pinned_max = (s_avg >= 1975) && (s_avg >= s_prev_avg - 2);
-    s_charger_trend = charging || pinned_max;
-    s_prev_avg = s_avg;
 
     /* {adc_raw, pct} — calibrated on this AIPI-Lite unit */
     static const int table[][2] = {
@@ -111,12 +105,15 @@ static void batt_update(void)
     g_sys.batt_pct = pct;
 }
 
-/* USB-host (SOF) detection is fast and reliable; combine with the slow
- * charger trend. Applies Wi-Fi power save on transitions only. */
+/* GPIO8 is the board's VBUS sense (verified on hardware): exact and instant,
+ * unlike v1's USB-host + voltage-trend guess, which stayed "external" after
+ * unplugging. GPIO21 is the charger's CHRG output (low while charging).
+ * Applies Wi-Fi power save on transitions only. */
 void power_eval(void)
 {
     static int applied = -1;
-    bool ext = usb_serial_jtag_is_connected() || s_charger_trend;
+    bool ext = gpio_get_level(PIN_VBUS) == 1;
+    g_sys.charging = ext && gpio_get_level(PIN_CHRG) == 0;
     g_sys.ext_power = ext;
     if ((int)ext == applied) return;
     applied = ext;
@@ -139,6 +136,21 @@ static volatile bool s_on = true;
 static volatile bool s_wake_req;
 static int64_t       s_last_activity_us;
 static int           s_dim_override = -1;
+
+void power_off(void)
+{
+    if (gpio_get_level(PIN_VBUS)) {
+        ESP_LOGW(TAG, "power-off refused: USB power present");
+        return;
+    }
+    ESP_LOGW(TAG, "powering off");
+    ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, 0);
+    ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+    if (s_panel) esp_lcd_panel_disp_on_off(s_panel, false);
+    gpio_set_level(PIN_PWR_HOLD, 0);            /* latch drops -> rails go down */
+    vTaskDelay(pdMS_TO_TICKS(500));
+    esp_deep_sleep_start();                     /* belt and braces, as stock fw */
+}
 
 void screen_init(esp_lcd_panel_handle_t panel)
 {

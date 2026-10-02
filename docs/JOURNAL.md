@@ -45,6 +45,18 @@ min ~91–100 KB (59 KB under a screenshot burst). Details: BRINGUP Phase 7.
 
 ## Session Log (newest first)
 
+### 2026-10-02 (Mac, ~02:30) — Board deep-dive: PSRAM, 2nd button, real charge pins
+User: "look up the tech details of this board online… go all out." Sources: stock
+xiaozhi board files (78/xiaozhi-esp32 boards/xorigin/aipi-lite), Robert Lipe's teardown,
+sticks918's ESPHome port + board photo, aipi.com specs, esp-sr model list. Conflicts
+settled on hardware with the user (button press + USB unplug while `/api/status` was
+polled): GPIO1 = left button, GPIO8 = USB sense, GPIO21 = charger CHRG; esptool:
+Embedded PSRAM 8 MB → enabled (octal) → 8.4 MB heap. Firmware now uses GPIO8/21 (v1's
+power heuristic never saw an unplug), left button (prev page, hold = power off), LCD
+40 MHz. Published a field guide artifact: https://claude.ai/artifact/FahHNVP747XKwGogF9GNxt
+Jarvis groundwork found: `wn9_jarvis_tts` wake word, `mn7_en` commands, mic via ES8311
+ADC on GPIO13 (ESPHome stalled there — never configured the ADC/PGA).
+
 ### 2026-10-02 (Mac, later) — v2.1: it talks; RINGS caption removed
 **User:** "remove the word Session from the rings. the tones suck… it has a speaker. can it
 'talk' to me?" — Done: caption gone (verified by screenshot). Speech: macOS `say` renders

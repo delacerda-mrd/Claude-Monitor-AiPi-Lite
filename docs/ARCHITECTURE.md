@@ -99,7 +99,8 @@ going; a web dashboard at `http://claude-meter.local/` mirrors it all.
 ## Screen (128×128) — pages cycle with a tap
 Top bar (on `lv_layer_top`, fixed while pages slide): clock · page dots (active =
 coral pill) · sync spinner (while polling) · Wi-Fi (amber < −78 dBm, red down) ·
-charge bolt (external power) · battery (white; amber ≤30 %, red ≤15 %, green charging).
+bolt while charging / plug when on USB and full · battery (white; amber ≤30 %, red ≤15 %,
+green while charging).
 
 | Page | Content |
 |------|---------|
@@ -112,8 +113,12 @@ charge bolt (external power) · battery (white; amber ≤30 %, red ≤15 %, gree
 Non-home pages (except CLAWD, a "pet mode") return to RINGS after 60 s.
 Level colors: sage < 60 % ≤ amber < 85 % ≤ red. Palette = HY3 theme (Anthropic).
 
-## Button (GPIO42, polled 10 ms, 30 ms debounce)
+## Buttons (polled 10 ms, 30 ms debounce)
 - Screen off → any press only wakes it.
+- **Left (GPIO1):** tap → previous page. **Hold 3 s on battery → power off** (Clawd
+  asleep + "Goodbye", then GPIO10 low + deep sleep, the stock method). On USB the hold
+  is ignored (USB would keep it powered). The left button powers it back on (latch).
+- **Right (GPIO42):**
 - **Tap** → next page (slide). **Hold ≥ 600 ms** → poll now (tick sound, spinner,
   jumps to RINGS) and then **speak the result** ("Session at 57 percent. Resets in 2
   hours 43 minutes. Weekly at 17 percent. You're on pace.").
@@ -122,8 +127,9 @@ Level colors: sage < 60 % ≤ amber < 85 % ≤ red. Palette = HY3 theme (Anthrop
 - LEDC PWM GPIO3, 5 kHz, 8-bit. Brightness from settings: default **80 % on external
   power, 15 % on battery**. Blank (backlight off + `disp_off`) after `blank_s` idle
   (default 180 s; 0 = never); wakes on button, error, recovery, usage change.
-- External power = `usb_serial_jtag_is_connected()` OR the battery-voltage charger
-  trend (v1 heuristic). On transitions: `WIFI_PS_MIN_MODEM` (ext) / `MAX_MODEM` (batt).
+- External power = **GPIO8** (USB power sense); charging = GPIO8 high AND **GPIO21** low
+  (charger CHRG). Both verified on hardware 2026-10-02; replaced v1's heuristic, which
+  never noticed an unplug. On transitions: `WIFI_PS_MIN_MODEM` (ext) / `MAX_MODEM` (batt).
 - Clawd stops advancing frames while the screen is off.
 
 ## LED (WS2812, very dim)
@@ -180,9 +186,10 @@ reset. USB flashes are never rolled back (recovery path).
 
 ## Display / LVGL configuration
 - ST7735 via `esp_lcd_st7735`: BGR element order, `invert_color=false`, `swap_xy`,
-  `mirror(true,false)`, gap 0, 27 MHz SPI. **`CONFIG_LV_COLOR_16_SWAP=y`** — LVGL
+  `mirror(true,false)`, gap 0, **40 MHz** SPI (the stock firmware's clock). **`CONFIG_LV_COLOR_16_SWAP=y`** — LVGL
   renders little-endian RGB565, the panel wants big-endian (DEV_KIT E-10 B). v1 lacked
   this and hand-scrambled its palette, which only works for saturated colors.
+- **PSRAM:** 8 MB octal (WROOM-1 N16R8), enabled since v2.1 → ~8.4 MB heap.
 - LVGL 8.4, memory from the system heap (`LV_MEM_CUSTOM`), 2 × 32-row draw buffers,
   flush released by the panel's DMA-done callback (`on_color_trans_done`), 20 ms
   refresh period.

@@ -13,9 +13,9 @@
 #define PIN_LCD_BL       3
 
 #define PIN_BTN         42      /* right button, active-low */
-#define PIN_BTN_PWR      1      /* left "power" button (xiaozhi POWER_BUTTON_GPIO) -- probing */
-#define PIN_CHG_DET      8      /* charger status, high = charging (xiaozhi) -- probing */
-#define PIN_PROBE_21    21      /* Lipe: "ES8311 charge counter" -- unconfirmed, probing */
+#define PIN_BTN_PWR      1      /* left button, active-low (verified 2026-10-02) */
+#define PIN_VBUS         8      /* USB power present, 1 = plugged (verified 2026-10-02) */
+#define PIN_CHRG        21      /* charger CHRG, 0 = charging (probable, 2026-10-02) */
 #define PIN_LED         46      /* WS2812, 1 pixel (strapping pin, OK post-boot) */
 #define PIN_PWR_HOLD    10      /* drive HIGH to stay powered on battery */
 /* Battery sense: ADC1 channel 1 = GPIO 2 (see power.c) */
