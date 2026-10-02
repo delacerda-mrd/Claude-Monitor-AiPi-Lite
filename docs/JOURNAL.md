@@ -53,6 +53,11 @@ new 4 MB `voice` partition, uploaded over HTTP. `voice.c` composes scripts and s
 from flash; tones remain the fallback (Talk setting / no pack). Hold-to-refresh now reads
 the status aloud. Partition change → one USB flash (`tools/idf.sh flash`); NVS kept its
 offset so token + Wi-Fi survived. Not yet heard by a human.
+**Follow-up "no audio":** not a fault — the user had quiet hours on (01–07) and it was
+02:00, so `app_say()` returned before queuing anything (diagnosed by adding audio-task
+logging: no `say:`/`melody` lines at all). Changed policy: quiet hours now only gate
+unprompted announcements; hold-button / Say status / volume test speak anyway (mute
+still wins). Verified: status script streamed 934 KB to I2S, `err=ESP_OK`, inside quiet hours.
 
 ### 2026-10-02 (Mac) — v2: modern refresh, Mac takeover, token-free polling
 **Goal (user):** "review this project … needs a modern refresh … sleek modern version

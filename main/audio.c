@@ -469,7 +469,11 @@ void audio_play_melody(melody_type_t type)
     default: return;
     }
 
-    if (!audio_mutex || xSemaphoreTake(audio_mutex, pdMS_TO_TICKS(50)) != pdTRUE) return;
+    if (!audio_mutex || xSemaphoreTake(audio_mutex, pdMS_TO_TICKS(50)) != pdTRUE) {
+        ESP_LOGW(TAG, "melody %d dropped: audio busy", type);
+        return;
+    }
+    ESP_LOGI(TAG, "melody %d", type);
 
     audio_resume();   /* power up once for the whole melody */
 
@@ -507,6 +511,7 @@ static void audio_task(void *arg)
     for (;;) {
         if (xQueueReceive(audio_q, &job, portMAX_DELAY) != pdTRUE) continue;
         if (!job.speech) { audio_play_melody(job.melody); continue; }
+        ESP_LOGI(TAG, "say: %s", job.script);
         if (xSemaphoreTake(audio_mutex, pdMS_TO_TICKS(500)) != pdTRUE) continue;
         audio_resume();
         apply_pending_volume();
@@ -533,8 +538,13 @@ bool audio_say_async(const char *script)
 }
 
 /* ---- streaming (audio task, under audio_mutex, codec resumed) ---- */
+static size_t s_stream_bytes;
+static esp_err_t s_stream_err;
+
 void audio_stream_begin(void)
 {
+    s_stream_bytes = 0;
+    s_stream_err = ESP_OK;
     if (tx_enabled) { i2s_channel_disable(tx_handle); tx_enabled = false; }
     pa_set(true);
     vTaskDelay(pdMS_TO_TICKS(5));
@@ -545,7 +555,9 @@ void audio_stream_begin(void)
 void audio_stream_write(const int16_t *stereo, size_t frames)
 {
     size_t done = 0;
-    i2s_channel_write(tx_handle, stereo, frames * 2 * sizeof(int16_t), &done, pdMS_TO_TICKS(1000));
+    esp_err_t e = i2s_channel_write(tx_handle, stereo, frames * 2 * sizeof(int16_t), &done, pdMS_TO_TICKS(1000));
+    if (e != ESP_OK && s_stream_err == ESP_OK) s_stream_err = e;
+    s_stream_bytes += done;
 }
 
 void audio_stream_end(void)
@@ -557,6 +569,8 @@ void audio_stream_end(void)
     pa_set(false);
     i2s_channel_disable(tx_handle);
     tx_enabled = false;
+    ESP_LOGI(TAG, "stream: %u bytes written, err=%s, PA gpio=%d",
+             (unsigned)s_stream_bytes, esp_err_to_name(s_stream_err), gpio_get_level(PA_PIN));
 }
 
 void audio_set_volume(int vol)

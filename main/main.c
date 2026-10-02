@@ -61,13 +61,27 @@ void app_sound(melody_type_t m)
     audio_play_async(m);
 }
 
-void app_say(const char *script, melody_type_t fallback)
+static void say(const char *script, melody_type_t fallback)
 {
-    if (settings_quiet_now()) return;
     settings_t c;
     settings_get(&c);
     if (c.talk && audio_say_async(script)) return;
     if (fallback != MELODY_NONE) audio_play_async(fallback);
+}
+
+void app_say(const char *script, melody_type_t fallback)
+{
+    if (!settings_quiet_now()) say(script, fallback);
+}
+
+void app_say_now(const char *script, melody_type_t fallback)
+{
+    if (!settings_muted()) say(script, fallback);
+}
+
+void app_sound_now(melody_type_t m)
+{
+    if (!settings_muted() && m != MELODY_NONE) audio_play_async(m);
 }
 
 /* ------------------------------------------------------------------ */
@@ -230,7 +244,7 @@ static void button_poll(void)
     if (sim) {                                  /* remote press from the web API */
         g_btn_sim = 0;
         screen_wake();
-        if (sim == 2) { usage_announce_next(); usage_poll_now(); app_sound(MELODY_BUTTON); ui_button_long(); }
+        if (sim == 2) { usage_announce_next(); usage_poll_now(); app_sound_now(MELODY_BUTTON); ui_button_long(); }
         else          ui_button_short();
         return;
     }
@@ -257,7 +271,7 @@ static void button_poll(void)
         ESP_LOGI(TAG, "long press: refresh + announce");
         usage_announce_next();          /* speak the result of this poll */
         usage_poll_now();
-        app_sound(MELODY_BUTTON);
+        app_sound_now(MELODY_BUTTON);
         ui_button_long();
     }
 }

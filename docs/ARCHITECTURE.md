@@ -150,7 +150,10 @@ them from flash through `audio_stream_*()` on the audio task.
 | Hold the button | the full status (above); a C7 tick first |
 
 Routine polls stay silent. Settings: **Talk** (default on), volume (default 70), mute,
-quiet hours (off by default) — mute/quiet silence speech too. Dashboard "Say status"
+quiet hours (off by default). **Quiet hours silence only unprompted announcements**;
+things you explicitly ask for — hold the button, "Say status", the volume test —
+still speak (`app_say_now`). **Mute silences everything.** The audio task logs every
+melody / script and `stream: N bytes written, err=…` for diagnosis. Dashboard "Say status"
 = `POST /api/say`. The end of every stream is flushed with ~120 ms of silence because
 the I2S channel runs with `auto_clear` off (else the DMA ring replays as a buzz).
 

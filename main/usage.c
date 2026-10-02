@@ -348,8 +348,8 @@ static const char *window_at(const usage_t *u) { return u->session_pct >= u->wee
 
 static void say_status_of(const usage_t *u)
 {
-    if (!u->ok && u->err == POLL_AUTH) { app_say("token_bad", MELODY_ERROR); return; }
-    if (!u->ok && u->err == POLL_NET)  { app_say("offline", MELODY_ERROR); return; }
+    if (!u->ok && u->err == POLL_AUTH) { app_say_now("token_bad", MELODY_ERROR); return; }
+    if (!u->ok && u->err == POLL_NET)  { app_say_now("offline", MELODY_ERROR); return; }
     if (!u->have_data) return;
     char s[120];
     time_t now = time(NULL);
@@ -364,7 +364,7 @@ static void say_status_of(const usage_t *u)
         int d = u->session_pct - (int)((WINDOW_5H_S - left) * 100 / WINDOW_5H_S);
         snprintf(s + n, sizeof(s) - n, " %s", d > 10 ? "ahead" : d < -10 ? "room" : "on_pace");
     }
-    app_say(s, MELODY_POLL_OK);
+    app_say_now(s, MELODY_POLL_OK);
 }
 
 void usage_say_status(void)

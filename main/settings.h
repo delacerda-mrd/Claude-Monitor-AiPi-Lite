@@ -35,3 +35,4 @@ bool settings_has_token(void);
 void settings_set_notify_ip(const char *ip);
 
 bool settings_quiet_now(void);                  /* mute or inside quiet hours */
+bool settings_muted(void);                      /* mute only                  */

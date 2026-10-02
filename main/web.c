@@ -450,7 +450,8 @@ static esp_err_t say_post(httpd_req_t *req)
     cJSON *j = cJSON_Parse(body);
     cJSON *sc = j ? cJSON_GetObjectItem(j, "script") : NULL;
     bool ok = true;
-    if (cJSON_IsString(sc)) ok = audio_say_async(sc->valuestring);
+    if (cJSON_IsTrue(cJSON_GetObjectItem(j, "tone"))) audio_play_async(MELODY_BOOT);  /* diagnostics */
+    else if (cJSON_IsString(sc)) ok = audio_say_async(sc->valuestring);
     else usage_say_status();
     cJSON_Delete(j);
     if (!ok) { httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "no voice pack"); return ESP_FAIL; }

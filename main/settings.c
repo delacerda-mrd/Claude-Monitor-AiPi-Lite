@@ -208,6 +208,13 @@ void settings_set_notify_ip(const char *ip)
     ESP_LOGI(TAG, "notify host -> %s", ip);
 }
 
+bool settings_muted(void)
+{
+    settings_t c;
+    settings_get(&c);
+    return c.mute;
+}
+
 bool settings_quiet_now(void)
 {
     settings_t c;

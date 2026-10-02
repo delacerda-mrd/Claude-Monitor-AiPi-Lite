@@ -56,6 +56,11 @@ void app_sound(melody_type_t m);
  * the tone when talking is off or no voice pack is installed. Non-blocking. */
 void app_say(const char *script, melody_type_t fallback);
 
+/* Same, for things the user explicitly asked for (hold the button, "Say
+ * status", volume test): quiet hours don't apply, only mute does. */
+void app_say_now(const char *script, melody_type_t fallback);
+void app_sound_now(melody_type_t m);
+
 /* Screenshot for the web API (httpd task). Blocks until the main loop has
  * re-rendered a full frame into malloc'd horizontal strips of lv_color_t
  * (16-bit, LVGL byte order), *rows rows each. Caller frees every strip.
