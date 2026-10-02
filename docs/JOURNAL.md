@@ -6,48 +6,80 @@
 
 ---
 
-## Current Status (updated 2026-07-19)
+## Current Status (updated 2026-10-02)
 
-**Phase:** Complete & in daily use. Post-bring-up (BRINGUP Phases 1–6 essentially green);
-FW_PORT_KIT adopted for ongoing maintenance/feature work.
+**Phase:** **v2 refresh deployed** (fw 2.0.0, running on the device via OTA). Mac is
+now the only machine — the Linux box is retired; toolchain + token pipeline moved here.
 
-**Known working (verified on hardware):**
-- Full feature set: ST7735 display + LVGL UI, Wi-Fi/SNTP/mDNS, Anthropic API poll with
-  SESSION/WEEKLY bars, WS2812 status LED, ES8311 audio tones, battery meter, button
-  force-poll, screen blank/wake, config web server, OTA + auto-rollback.
-- Current HEAD firmware (`a5c9cde` and later — edge-triggered alerts, bounded recv
-  timeouts, battery/countdown/Wi-Fi-recovery fixes, online-notify) is **flashed and
-  confirmed running** on the device (user confirmed at adoption).
-- Host tooling: `push_claude_token.py` token rotation verified end-to-end 2026-07-02
-  (force-expire + `claude -p ping`, HTTP 200 to device); `notify_listener.py` set up.
-  Host push pipeline was accidentally torn down 2026-07-09 00:11 (units deleted) and
-  **restored the same day** — the three systemd user units are now version-controlled in
-  `host/` so they can't be silently lost again. Timer + listener enabled, verified HTTP 200.
+**Known working (verified on hardware 2026-10-02):** v2 boots without `secrets.h`
+(Wi-Fi from NVS), token-free `/api/oauth/usage` polling, 429 → header fallback, Mac
+launchd token push + device→Mac online-notify, all 5 pages + splash render (checked via
+`/api/screen.bmp`), Clawd animates, history survives reboots, OTA self-confirm, heap
+min ~91–100 KB. Details: BRINGUP Phase 7.
 
 **Known broken / unverified:**
-- None blocking. Not formally measured: heap/stack headroom under load, discrete
-  power-cycle ×10 (both `[~]` in BRINGUP Phase 5/6) — no instability observed in practice.
+- Panel colors with `LV_COLOR_16_SWAP` not yet confirmed **by eye** (screenshots show
+  LVGL's output, not the glass). If red/blue look swapped, flip `rgb_ele_order` in
+  `display_init()` — do not hand-permute colors again.
+- Physical button gestures, fade-in, blanking, new tones, setup AP, battery mode: `[~]`.
 
 **Next steps:**
-- [ ] (open — ask user what to work on next)
+- [ ] User: confirm colors + button feel on the device; report anything off.
+- [ ] 24 h soak (token rotation across the 4 h agent cycle).
+- [ ] Optional: exercise setup mode (forget Wi-Fi from the dashboard → AP + QR).
 
 **Environment notes:**
-- Build/flash machine: the Linux box. Serial `/dev/ttyACM0` (native USB-CDC).
-- ESP-IDF **v5.4.4**. Build: `source ~/esp/esp-idf/export.sh && idf.py build`.
-- Sessions ALSO run from the Mac (2026-07-19 onward): **no ESP-IDF, no
-  `main/secrets.h` there** — docs-only until installed. `git pull` at session
-  start is now load-bearing, not just habit (a stale Mac checkout caused a
-  duplicate-adoption near-miss on 2026-07-19).
-- Mac has untracked `copy_claude_token.py` + `Copy Claude Token.command`
-  (uncommitted Mac-side token tooling — decide whether to keep/commit).
-- Sync/backup via GitHub remote `origin`
-  (github.com/delacerda-mrd/Claude-Monitor-AiPi-Lite).
-- Board ref fed back to the kit 2026-07-19: `FW_PORT_KIT/boards/AIPI-Lite.md`
-  (keep in sync with `docs/BOARD_REFERENCE.md`).
+- Build/flash: the Mac. `tools/idf.sh build`; OTA `curl --data-binary @build/claude_meter_v2.bin http://192.168.66.125/ota`
+  (needs the Bash sandbox off for LAN). Serial `/dev/cu.usbmodem*` — opening it resets the chip.
+- ESP-IDF **v5.4.4** at `~/esp/esp-idf`, venv on Homebrew python@3.12 (plain
+  `export.sh` fails silently under the default python 3.14).
+- Token pipeline: `host/macos/install.sh` agents `com.claude-meter.token-push` (4 h) +
+  `com.claude-meter.notify-listener` (:5555). Needed the **Local Network** grant for
+  `python3` (granted 2026-10-02). Logs `~/Library/Logs/com.claude-meter.*.log`.
+- The sibling Clawdmeter (`../Claude_Meter_HY3`) polls the same usage endpoint from its
+  menu-bar daemon; its fonts, palette and Clawd frames were reused here.
+- Sync/backup via GitHub remote `origin` (github.com/delacerda-mrd/Claude-Monitor-AiPi-Lite).
 
 ---
 
 ## Session Log (newest first)
+
+### 2026-10-02 (Mac) — v2: modern refresh, Mac takeover, token-free polling
+**Goal (user):** "review this project … needs a modern refresh … sleek modern version
+that fits on this tiny screen … I don't use my linux box … go all out."
+**Found:** device showing `ERROR 0%/0%` — v1's serial log: `HTTP 401 - token rejected`,
+notify to `shadowtrooper.local` unresolvable. The Linux box had been the only token
+source, so the token simply expired.
+**Did:**
+- Mac toolchain: ESP-IDF v5.4.4 + `tools/idf.sh` (pins python@3.12 — default 3.14 makes
+  `export.sh` fail silently). Baseline v1 build passed before any change.
+- Firmware rewritten into modules (see ARCHITECTURE). Carried over verbatim: panel init,
+  battery table + charger heuristic, OTA/rollback, edge-triggered alerts, recv loops.
+- Polling: `GET /api/oauth/usage` (free; same request the HY3 daemon uses) with v1's
+  1-token header poll as fallback. **Observed: the endpoint answers 429
+  `rate_limit_error` for an expired token** (a bogus token gets 401) → 429 now triggers
+  the fallback + a `retry-after`/600 s hold-off, and the fallback's 401 surfaces `token?`.
+- UI: HY3 palette + fonts (Styrene patched for LVGL 8; JetBrains Mono generated),
+  rings / pace / trend / Clawd / device pages, top bar, splash, setup screen, count-up
+  and arc animations, area-filled chart. Clawd frames from HY3's claudepix data via
+  `tools/gen_clawd.py`.
+- Colors: `CONFIG_LV_COLOR_16_SWAP=y` replaces v1's hand-scrambled palette (E-10 B).
+- Memory: first v2 boot hit **min heap 13 KB**; fixed with `LV_MEM_CUSTOM` + mbedTLS
+  dynamic buffers → min ~100 KB. Screenshot buffer split into 4 × 8 KB strips
+  (largest free block < 32 KB).
+- No `secrets.h` needed (Wi-Fi from driver NVS); setup AP with QR + captive DNS.
+- Web: new dashboard; `/api/status`, `/api/screen.bmp`, `/api/settings`, `/api/wifi`,
+  `/api/poll`, `/api/button`. Token pusher's IP becomes the notify host.
+- Host: `push_claude_token.py` reads/writes the macOS Keychain; `notify_listener.py`
+  portable; launchd agents + `host/macos/install.sh`; systemd units → `host/linux/`;
+  Mac token-copy tools committed under `host/macos/`.
+- First launchd push failed `[Errno 65] No route to host` = macOS Local Network
+  privacy; user granted python3 → push `HTTP 200`.
+**Verified on hardware:** see BRINGUP Phase 7 (all via serial + `/api/*`).
+**Not verified:** panel colors by eye, physical button, setup mode, battery mode.
+**Iteration:** 9 OTAs, each checked by screenshot — fixed `%` placement (flex pair),
+missing status icons (explicit layout), PACE text collision, SYSTEM QR overlap,
+TREND title collision, empty trend after reboots (RTC-RAM history).
 
 ### 2026-07-19 (Mac) — First Mac session; stale checkout caught; board ref fed to kit
 **Goal:** `/fw` resume from the Mac.

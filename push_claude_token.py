@@ -4,9 +4,10 @@ push_claude_token.py
 Push the Claude Code OAuth access token to the Claude Meter (AiPi-Lite) device.
 
 What it does, in order:
-  1. Read the token from ~/.claude/.credentials.json.
+  1. Read the token: macOS Keychain item "Claude Code-credentials" (where
+     Claude Code keeps it on a Mac), else ~/.claude/.credentials.json (Linux).
   2. If under --margin hours remain, force a refresh: back-date expiresAt in
-     the credentials file, then run `claude -p ping` so the CLI rotates the
+     the stored credentials, then run `claude -p ping` so the CLI rotates the
      token through its own OAuth path (the CLI only refreshes when *it*
      considers the token expired, not at our margin — merely calling
      `claude -p ping` without back-dating is a no-op), then re-read.
@@ -31,6 +32,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -43,6 +45,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 DEFAULT_DEVICE_URL = "http://claude-meter.local/"
 DEFAULT_CREDS_PATH = os.path.expanduser("~/.claude/.credentials.json")
+KEYCHAIN_SERVICE   = "Claude Code-credentials"
 DEFAULT_MARGIN_H   = 6      # refresh if fewer than this many hours remain.
                             # Token life is ~8h and the timer runs every 4h, so
                             # 6h means almost every run pushes a near-full-life
@@ -59,11 +62,58 @@ def err(msg):
 
 
 # ----------------------------------------------------------------------------
-# Credentials
+# Credentials: a file (Linux) or the macOS Keychain, behind one interface
 # ----------------------------------------------------------------------------
-def load_creds(path):
-    with open(path) as f:
-        return json.load(f)["claudeAiOauth"]
+class CredStore:
+    """Raw access to Claude Code's stored OAuth credentials (a JSON blob)."""
+
+    def __init__(self, path):
+        self.path = path
+        use_keychain = (sys.platform == "darwin" and path == DEFAULT_CREDS_PATH
+                        and not os.path.exists(path))
+        self.kind = "keychain" if use_keychain else "file"
+
+    def __str__(self):
+        return f"Keychain:{KEYCHAIN_SERVICE}" if self.kind == "keychain" else self.path
+
+    def read_raw(self):
+        if self.kind == "file":
+            with open(self.path) as f:
+                return f.read()
+        r = subprocess.run(["security", "find-generic-password", "-s", KEYCHAIN_SERVICE, "-w"],
+                           capture_output=True, text=True, timeout=15)
+        if r.returncode != 0 or not r.stdout.strip():
+            raise OSError(f"Keychain read failed: {(r.stderr or '').strip()}")
+        raw = r.stdout.strip()
+        # `security -w` hex-encodes a password that isn't one printable line.
+        return raw if raw.startswith("{") else bytes.fromhex(raw).decode()
+
+    def write_raw(self, data):
+        if self.kind == "file":
+            _atomic_write(self.path, data.encode())
+            return
+        # Must stay ONE line: a multi-line password reads back hex-encoded,
+        # which breaks the Claude CLI. Update in place for the item's account.
+        r = subprocess.run(["security", "find-generic-password", "-s", KEYCHAIN_SERVICE],
+                           capture_output=True, text=True, timeout=15, check=True)
+        m = re.search(r'"acct"<blob>="([^"]*)"', r.stdout)
+        acct = m.group(1) if m else os.environ.get("USER", "")
+        subprocess.run(["security", "add-generic-password", "-U", "-a", acct,
+                        "-s", KEYCHAIN_SERVICE, "-w", data],
+                       capture_output=True, text=True, timeout=15, check=True)
+
+    def load(self):
+        return json.loads(self.read_raw())
+
+    def save(self, j):
+        if self.kind == "keychain":
+            self.write_raw(json.dumps(j, separators=(",", ":")))
+        else:
+            self.write_raw(json.dumps(j, indent=2) + "\n")
+
+
+def load_creds(store):
+    return store.load()["claudeAiOauth"]
 
 
 def remaining_hours(info):
@@ -113,36 +163,33 @@ def _atomic_write(path, data_bytes):
         raise
 
 
-def force_refresh(creds_path, margin_h):
+def force_refresh(store):
     """Force the Claude CLI to rotate the OAuth token by back-dating
     expiresAt, then letting `claude -p ping` refresh through the CLI's own
     OAuth path. Returns True if the token actually rotated."""
     for _attempt in range(2):
-        st_before = os.stat(creds_path)
-        orig_bytes = open(creds_path, "rb").read()
-        j = json.loads(orig_bytes)
+        orig = store.read_raw()
+        j = json.loads(orig)
         old_token = j["claudeAiOauth"]["accessToken"]
         old_exp = j["claudeAiOauth"]["expiresAt"]
+        backdated = int(time.time() * 1000) - 60_000
+        j["claudeAiOauth"]["expiresAt"] = backdated
 
-        j["claudeAiOauth"]["expiresAt"] = int(time.time() * 1000) - 60_000
-        new_bytes = json.dumps(j, indent=2).encode() + b"\n"
-
-        # Re-check mtime right before the write; if something else touched
-        # the file (e.g. a live interactive session) since we read it,
-        # restart from a fresh read rather than clobbering it.
-        st_now = os.stat(creds_path)
-        if st_now.st_mtime != st_before.st_mtime:
+        # Re-check right before the write; if something else (a live Claude
+        # session) rewrote the credentials since we read them, start over
+        # from a fresh read rather than clobbering its update.
+        if store.read_raw() != orig:
             continue
-        _atomic_write(creds_path, new_bytes)
+        store.save(j)
         break
     else:
-        err("WARNING: credentials file kept changing underneath us — "
+        err("WARNING: credentials kept changing underneath us — "
             "skipping forced refresh this cycle")
         return False
 
     refresh_via_cli()
 
-    new_j = json.loads(open(creds_path, "rb").read())
+    new_j = store.load()
     new_token = new_j["claudeAiOauth"]["accessToken"]
     new_exp = new_j["claudeAiOauth"]["expiresAt"]
     rotated = new_token != old_token and new_exp > old_exp
@@ -152,12 +199,12 @@ def force_refresh(creds_path, margin_h):
             f"(new expiry {time.strftime('%F %T', time.localtime(new_exp / 1000))})")
     else:
         err("WARNING: 'claude -p ping' did not rotate the token")
-        # Only restore if the file still holds our back-dated marker and the
+        # Only restore if the store still holds our back-dated marker and the
         # old token — otherwise a concurrent legitimate refresh landed and we
         # must not clobber it.
-        if new_token == old_token and new_exp == j["claudeAiOauth"]["expiresAt"]:
-            _atomic_write(creds_path, orig_bytes)
-            err("WARNING: restored original credentials file")
+        if new_token == old_token and new_exp == backdated:
+            store.write_raw(orig)
+            err("WARNING: restored original credentials")
 
     return rotated
 
@@ -249,7 +296,8 @@ def parse_args():
                    help="X-Auth secret if the device requires one "
                         "(env: CLAUDE_METER_SECRET)")
     p.add_argument("--creds", "-c", default=DEFAULT_CREDS_PATH,
-                   help="path to credentials JSON (default: %(default)s)")
+                   help="path to credentials JSON (default: %(default)s; on macOS "
+                        "the Keychain is used when that file doesn't exist)")
     p.add_argument("--margin", type=float, default=DEFAULT_MARGIN_H,
                    help="refresh if fewer than this many hours remain "
                         "(default: %(default)s)")
@@ -262,19 +310,24 @@ def main():
     args = parse_args()
     base_url = args.url.rstrip("/") + "/"
 
+    store = CredStore(args.creds)
     try:
-        info = load_creds(args.creds)
+        info = load_creds(store)
     except Exception as e:
-        err(f"ERROR: cannot read credentials: {e}")
+        err(f"ERROR: cannot read credentials from {store}: {e}")
         sys.exit(1)
 
     rem = remaining_hours(info)
     rotated = None
     if rem < args.margin:
         log(f"Token expires in {rem:.1f}h — forcing refresh via 'claude -p ping'...")
-        rotated = force_refresh(args.creds, args.margin)
         try:
-            info = load_creds(args.creds)            # re-read after refresh
+            rotated = force_refresh(store)
+        except Exception as e:
+            err(f"WARNING: forced refresh failed: {e}")
+            rotated = False
+        try:
+            info = load_creds(store)                 # re-read after refresh
         except Exception as e:
             err(f"ERROR: cannot re-read credentials: {e}")
             sys.exit(1)

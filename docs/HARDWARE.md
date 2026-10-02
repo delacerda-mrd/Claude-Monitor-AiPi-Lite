@@ -7,7 +7,9 @@ then reflect anything session-relevant here.
 
 ## Board / SoC
 - **AIPI-Lite** (xuanzhi-yuanzhi ESP32-S3): ESP32-S3, 16 MB flash (DIO/80 MHz), **no PSRAM**.
-- Console: native USB-Serial-JTAG → `/dev/ttyACM0` on Linux. `idf.py flash` auto-enters download over CDC.
+- Console: native USB-Serial-JTAG → `/dev/cu.usbmodem*` on the Mac (build machine
+  since 2026-10-02; was `/dev/ttyACM0` on the retired Linux box). `tools/idf.sh flash`
+  auto-picks the port and auto-enters download over CDC. Opening the port resets the chip.
 - Toolchain: ESP-IDF **v5.4.4**.
 
 ## Pin map (summary — authoritative table in BOARD_REFERENCE.md §10)
@@ -27,6 +29,9 @@ then reflect anything session-relevant here.
   (`main/main.c`) was calibrated on this unit's divider. Recalibrate if the board or
   cell changes — see BOARD_REFERENCE.md §8.
 - **Light sleep OFF** is mandatory (kills the SPI/display bus) — see BOARD_REFERENCE.md §12.
+- **Battery:** the blue single-cell LiPo is fitted; reads 100 % while on USB (charger
+  pins it high — expected).
+- **Heap (v2, measured 2026-10-02):** ~113 KB free, min ~91–100 KB since boot.
 
 ## Flash / partitions
 Two-OTA layout on 16 MB (`partitions.csv`): `ota_0`/`ota_1` 2 MB each, `otadata`,

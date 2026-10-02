@@ -1,8 +1,9 @@
 # Claude Meter v2 — AiPi-Lite edition · Project Context for Claude Code
 
 ## SESSION START PROTOCOL (do this first, every session)
-1. `git pull` — sessions run from BOTH the Mac and the Linux PC; the checkout may
-   be stale. On journal conflict: keep both sides' entries, merge Current Status by date.
+1. `git pull` — keeps the checkout in sync with GitHub (the Linux PC is retired as of
+   2026-10-02; the Mac is the only machine). On journal conflict: keep both sides'
+   entries, merge Current Status by date.
 2. Read `docs/JOURNAL.md` — the Current Status block says exactly where we are.
 3. Read `docs/BRINGUP.md` when deciding what to work on next.
 4. Read `docs/ARCHITECTURE.md` when the task touches firmware behavior or internals
@@ -18,41 +19,52 @@
 4. Commit docs updates and push to origin (source changes only if the user asked).
 
 ## What this project is
-ESP32-S3 firmware for a physical Claude usage-meter gadget: polls the Anthropic API
-and shows session (5h) + weekly (7d) rate-limit utilization on a 1.44" ST7735 128×128
-TFT, plus RGB status LED, battery meter, and audio tones. Written from scratch (no
-upstream); complete and in daily use. Single-file firmware: `main/main.c` (~1466 lines)
-+ `main/audio.c`. Behavior/internals truth: `docs/ARCHITECTURE.md`.
-Toolchain: **ESP-IDF v5.4.4** + `esp_lcd_st7735` + LVGL 8.4.
+ESP32-S3 firmware for a physical Claude usage-meter gadget: polls the token-free
+`/api/oauth/usage` endpoint (1-token header poll as fallback) and shows session (5h) +
+weekly (7d) usage on a 1.44" ST7735 128×128 TFT — rings, pace, trend, Clawd mood pet,
+device page — plus RGB LED, battery, audio, web dashboard. Written from scratch (no
+upstream); v2 refresh 2026-10-02. Behavior/internals truth: `docs/ARCHITECTURE.md`.
+Toolchain: **ESP-IDF v5.4.4** + `esp_lcd_st7735` 0.0.1 + LVGL 8.4.0 (pinned by the
+committed `dependencies.lock`).
 
 ## Layout
-- `main/main.c` — the whole firmware (boot, display+LVGL+UI, Wi-Fi, poll, web server, OTA, power).
-- `main/audio.c` / `audio.h` — ES8311 codec + notification tones.
-- `main/secrets.h` — Wi-Fi creds + initial token (NOT committed; see `secrets.h.example`).
-- `partitions.csv` / `sdkconfig` — two-OTA 16 MB layout, no PSRAM.
-- `push_claude_token.py` / `notify_listener.py` — host-side token tooling (see `README.md`).
+- `main/` — modules: `main.c` (boot, LVGL driver, main loop, button), `ui.c` + `clawd.c`
+  (all LVGL), `usage.c` (poll task), `net.c`, `web.c` + `web/index.html`, `power.c`,
+  `led.c`, `settings.c`, `audio.c`, `fonts/`. Map + threading: `docs/ARCHITECTURE.md`.
+- `main/secrets.h` — OPTIONAL seed for Wi-Fi/token/`CFG_AUTH_SECRET` (NOT committed).
+- `partitions.csv` / `sdkconfig.defaults` — two-OTA 16 MB layout, no PSRAM
+  (`sdkconfig` is generated, not committed).
+- `push_claude_token.py` / `notify_listener.py` + `host/macos/` (launchd) /
+  `host/linux/` (systemd) — host-side token tooling (see `README.md`).
+- `tools/` — `idf.sh` (IDF wrapper), `shot.sh` (screenshot), `serial_log.py`,
+  `gen_clawd.py` (regenerates `main/clawd_anims.h`).
 
-## Build / flash / debug
+## Build / flash / debug (Mac)
 ```bash
-source ~/esp/esp-idf/export.sh
-idf.py build
-idf.py -p /dev/ttyACM0 flash monitor
+tools/idf.sh build                          # NOT plain export.sh: see below
+tools/idf.sh flash monitor                  # port auto-detected: /dev/cu.usbmodem*
+curl --data-binary @build/claude_meter_v2.bin http://192.168.66.125/ota   # preferred
+tools/shot.sh                               # PNG of what the screen shows now
 ```
-- Serial port: `/dev/ttyACM0` (Linux, native USB-CDC). Build/flash happen on the Linux
-  PC only — the Mac has no ESP-IDF and no `secrets.h` (docs-only sessions there).
-- OTA (post first USB flash): `curl --data-binary @build/*.bin -H 'X-Auth: <secret>' http://claude-meter.local/ota`
-- If a build misbehaves after an IDF change: `idf.py fullclean`.
+- `tools/idf.sh` pins Homebrew `python@3.12`; plain `source export.sh` picks python 3.14
+  and silently fails to find the IDF venv.
+- Prefer OTA: it keeps the previous image as an automatic rollback target.
+- LAN access (curl to the device) needs the sandbox off; the device answers at
+  `192.168.66.125` / `claude-meter.local`. Opening the USB serial port resets the chip.
+- If a build misbehaves after an IDF change: `tools/idf.sh fullclean`.
 
 ## Secrets
-`main/secrets.h` defines `WIFI_SSID`, `WIFI_PASSWORD`, `CLAUDE_TOKEN`, optional
-`CFG_AUTH_SECRET`. First boot persists the token to NVS (`cfg`/`token`); later boots
-load from NVS. Token is an OAuth bearer from `~/.claude/.credentials.json`.
+Wi-Fi config and the token live in NVS (Wi-Fi in the driver's `nvs.net80211`, token in
+`cfg`/`token`); `secrets.h` only seeds an empty device. The token is Claude Code's
+OAuth bearer — on the Mac in the Keychain item "Claude Code-credentials" — pushed by
+the launchd agents (`host/macos/install.sh`). Don't read it yourself; the agents do.
 
 ## Hard rules for this project
 - Never guess pin numbers or I2C addresses — `docs/BOARD_REFERENCE.md` or measurement only.
 - Never guess behavior — `docs/ARCHITECTURE.md` or ask.
 - A bring-up item is done when verified ON HARDWARE, not when it compiles.
-- Every API poll spends 1 real token and counts against rate limits — don't add polls casually.
+- The usage endpoint is free, but the header fallback spends 1 real token per poll —
+  keep it a fallback; don't add polls casually.
 - **All LVGL access is from the main loop**; the poll task only samples values. Never touch LVGL off the main loop.
 - **Light sleep must stay OFF** (kills the SPI/display bus).
 - Durable hardware facts → `docs/BOARD_REFERENCE.md`. Behavior changes → `docs/ARCHITECTURE.md`.

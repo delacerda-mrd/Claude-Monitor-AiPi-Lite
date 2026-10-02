@@ -71,7 +71,9 @@ Status legend: `[ ]` not started · `[~]` in progress / unverified-on-HW · `[x]
 
 ## Phase 5 — Integration
 - [x] All peripherals run simultaneously (display + Wi-Fi + audio + LED + battery) in daily use
-- [~] Heap/stack headroom measured under load — not explicitly measured; no observed instability
+- [x] Heap headroom measured under load (v2, 2026-10-02): `/api/status` heap stats —
+  ~113 KB free, min 91–100 KB since boot across TLS polls + OTA uploads (was min 13 KB
+  before `LV_MEM_CUSTOM` + mbedTLS dynamic buffers)
 - [x] Poll cadence honored (120 s USB / 300 s battery)
 
 ## Phase 6 — Validation
@@ -79,3 +81,30 @@ Status legend: `[ ]` not started · `[~]` in progress / unverified-on-HW · `[x]
 - [~] Formal power-cycle ×10 test — not run as a discrete test; cold-boots reliably in practice
 - [x] Recovery: USB reflash always works (never rolled back — recovery path)
 - [x] Token rotation end-to-end verified 2026-07-02 (host push → device HTTP 200 → NVS → poll)
+
+## Phase 7 — v2 refresh (2026-10-02, Mac)
+Verified via serial log, `/api/status` and `/api/screen.bmp` (exact panel input).
+`[~]` = needs a human at the device (eyes on the panel, hands on the button).
+
+### Toolchain / deploy
+- [x] ESP-IDF v5.4.4 on the Mac (python@3.12 venv) builds v2 clean, zero warnings; `tools/idf.sh`
+- [x] OTA from the Mac (`curl --data-binary`) × 9; every image self-confirmed after 15 s online
+- [x] Component versions pinned: `dependencies.lock` committed (LVGL 8.4.0, st7735 0.0.1, mdns 1.13.1, led_strip 3.0.3, es8311 1.0.0~1)
+### Network / data
+- [x] Boots without `secrets.h`: rejoins Wi-Fi from the driver's NVS config
+- [x] Token-free poll: `session=42% weekly=15% via usage api`
+- [x] Usage endpoint 429 (seen with an expired token) → header fallback → 401 → `token?` + host notify
+- [x] Mac launchd push agent → device `HTTP 200`; device learns `notify_ip` = the Mac
+- [x] Device → Mac online-notify (inbound :5555) → listener runs push → `HTTP 200`
+- [x] History survives a reboot (RTC RAM): `restored 1 history samples`
+- [~] Setup AP + join-QR + captive portal — not exercised (would need the stored Wi-Fi gone)
+- [~] 24 h soak on v2 (token rotation across the 4 h agent cycle)
+### UI (rendering verified by screenshot; panel output needs eyes)
+- [x] Splash → RINGS, PACE, TREND, CLAWD, SYSTEM all render with live data; no overlaps
+- [x] Clawd animates (3 distinct frames in 5 captures)
+- [x] Remote button (`POST /api/button`) cycles pages; `page` reported in `/api/status`
+- [~] **Panel colors correct with `LV_COLOR_16_SWAP`** (sage/amber/red, coral, cream text) — confirm by eye
+- [~] Physical button: tap = next page, hold ≥0.6 s = refresh (+ tick), press while blank = wake only
+- [~] Backlight fade-in at boot; blank after 3 min, wake on press
+- [~] New tones (window reset, setup) and the volume / mute / quiet-hours settings
+- [~] On battery: 15 % backlight, 300 s polls, battery icon level

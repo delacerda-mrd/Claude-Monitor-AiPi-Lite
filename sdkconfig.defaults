@@ -1,6 +1,5 @@
-# This file was generated using idf.py save-defconfig or menuconfig [D] key. It can be edited manually.
-# Espressif IoT Development Framework (ESP-IDF) 5.4.0 Project Minimal Configuration
-#
+# Claude Meter v2 -- minimal config. sdkconfig is generated from this file
+# (sdkconfig itself is not committed). ESP-IDF v5.4.4.
 CONFIG_IDF_TARGET="esp32s3"
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 CONFIG_ESPTOOLPY_FLASHSIZE="16MB"
@@ -9,6 +8,21 @@ CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 CONFIG_HTTPD_MAX_REQ_HDR_LEN=2048
 CONFIG_LWIP_DNS_SUPPORT_MDNS_QUERIES=y
 CONFIG_PM_ENABLE=y
-CONFIG_LV_FONT_MONTSERRAT_12=y
-CONFIG_LV_FONT_UNSCII_8=y
-CONFIG_LV_FONT_UNSCII_16=y
+# LVGL runs on the main task (rendering + chart masks need headroom)
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# --- LVGL 8.4 ---
+# SPI panels want big-endian RGB565; LVGL renders little-endian. Swap in
+# LVGL so every color is exact (DEV_KIT E-10 case B). v1 instead
+# hand-scrambled its palette, which only worked for saturated colors.
+CONFIG_LV_COLOR_16_SWAP=y
+# LVGL allocates from the system heap (no fixed 64 KB pool).
+CONFIG_LV_MEM_CUSTOM=y
+CONFIG_LV_DISP_DEF_REFR_PERIOD=20
+CONFIG_LV_FONT_MONTSERRAT_10=y
+CONFIG_LV_USE_QRCODE=y
+
+# --- TLS RAM: no PSRAM here, so free mbedTLS buffers after the handshake ---
+CONFIG_MBEDTLS_DYNAMIC_BUFFER=y
+CONFIG_MBEDTLS_DYNAMIC_FREE_CONFIG_DATA=y
+CONFIG_MBEDTLS_DYNAMIC_FREE_CA_CERT=y

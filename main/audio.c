@@ -21,6 +21,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
+#include "freertos/queue.h"
 #include "driver/i2c.h"
 #include "driver/i2s_std.h"
 #include "driver/gpio.h"
@@ -126,6 +127,16 @@ static const note_t melody_token_saved[] = {
 static const note_t melody_button[] = {
     {NOTE_C7, 150},
 };
+static const note_t melody_reset[] = {
+    {NOTE_C5, 150}, {NOTE_E5, 150}, {NOTE_G5, 150}, {NOTE_C6, 260},
+};
+static const note_t melody_setup[] = {
+    {NOTE_G4, 200}, {NOTE_D5, 260},
+};
+
+static QueueHandle_t audio_q = NULL;
+static void audio_task(void *arg);
+static int pending_volume = -1;     /* applied under audio_mutex before playback */
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -346,6 +357,9 @@ esp_err_t audio_init(void)
     /* Idle until first playback — stops MCLK and mutes the codec. */
     audio_suspend();
 
+    audio_q = xQueueCreate(4, sizeof(melody_type_t));
+    if (audio_q) xTaskCreate(audio_task, "audio", 3072, NULL, 3, NULL);
+
     ESP_LOGI(TAG, "audio subsystem ready");
     return ESP_OK;
 }
@@ -441,12 +455,21 @@ void audio_play_melody(melody_type_t type)
     case MELODY_ERROR:          notes = melody_error;          count = 2; break;
     case MELODY_TOKEN_SAVED:    notes = melody_token_saved;    count = 2; break;
     case MELODY_BUTTON:         notes = melody_button;         count = 1; break;
+    case MELODY_RESET:          notes = melody_reset;          count = 4; break;
+    case MELODY_SETUP:          notes = melody_setup;          count = 2; break;
     default: return;
     }
 
     if (!audio_mutex || xSemaphoreTake(audio_mutex, pdMS_TO_TICKS(50)) != pdTRUE) return;
 
     audio_resume();   /* power up once for the whole melody */
+
+    /* Volume changes are deferred to here: the codec only answers I2C
+     * while MCLK runs, which is only true between resume and suspend. */
+    if (pending_volume >= 0 && es_handle) {
+        es8311_voice_volume_set(es_handle, pending_volume, NULL);
+        pending_volume = -1;
+    }
     for (int i = 0; i < count; i++) {
         if (notes[i].freq == REST) {
             vTaskDelay(pdMS_TO_TICKS(notes[i].dur_ms));
@@ -457,6 +480,33 @@ void audio_play_melody(melody_type_t type)
     audio_suspend();  /* back to idle — stop MCLK, mute codec */
 
     xSemaphoreGive(audio_mutex);
+}
+
+/* ------------------------------------------------------------------ */
+/* Async playback + volume                                              */
+/* ------------------------------------------------------------------ */
+
+static void audio_task(void *arg)
+{
+    (void)arg;
+    melody_type_t m;
+    for (;;) {
+        if (xQueueReceive(audio_q, &m, portMAX_DELAY) == pdTRUE)
+            audio_play_melody(m);
+    }
+}
+
+void audio_play_async(melody_type_t type)
+{
+    if (!audio_q) return;
+    xQueueSend(audio_q, &type, 0);
+}
+
+void audio_set_volume(int vol)
+{
+    if (vol < 0) vol = 0;
+    if (vol > 100) vol = 100;
+    pending_volume = vol;   /* int store is atomic; applied before next melody */
 }
 
 /* ------------------------------------------------------------------ */

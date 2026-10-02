@@ -31,7 +31,7 @@ CYD/ES3C28P quirks over.
 |-----------|-------|
 | Bridge IC or native | Native USB-Serial-JTAG (no bridge chip) `(firmware, verified)` |
 | Linux device | `/dev/ttyACM0` (native CDC → `ttyACM*`) `(verified on hardware)` |
-| macOS device | `/dev/cu.usbmodem*` if ever used from a Mac (not this project's machine) |
+| macOS device | `/dev/cu.usbmodem*` (e.g. `/dev/cu.usbmodem121401`) — the build machine since 2026-10-02. **Opening the port resets the chip** on macOS even with DTR/RTS deasserted before `open()` `(verified on hardware 2026-10-02)` |
 | Download-mode entry | Standard ESP32-S3 (hold BOOT/GPIO0 while resetting) — rarely needed; `idf.py flash` triggers auto-download over CDC. |
 
 ## 3. Display
@@ -42,7 +42,7 @@ CYD/ES3C28P quirks over.
 | Interface / SPI / clock | SPI, 27 MHz pixel clock (`LCD_PIXEL_CLK`) `(firmware)` |
 | Inversion required? | **NO** — `esp_lcd_panel_invert_color(panel, false)`. `(firmware, verified)` |
 | Orientation flags | `swap_xy(true)`, `mirror(true,false)`, `set_gap(0,0)` `(firmware, verified)` |
-| RGB order | Default (no BGR swap needed) `(firmware, verified)` |
+| RGB order | `rgb_ele_order = BGR` in the panel config, **plus `CONFIG_LV_COLOR_16_SWAP=y`** (LVGL renders little-endian RGB565, the panel reads big-endian). v1 lacked the swap and hand-permuted its palette ("LVGL red→blue, green→red, blue→green"), which only works for saturated colors — greys/pastels came out wrong. `(firmware v2; panel-side colors to be confirmed by eye)` |
 
 ### Display GPIO Mapping `(firmware, verified on hardware)`
 | Signal | GPIO | Notes |
@@ -129,6 +129,17 @@ boot; the firmware drives it without issue `(verified on hardware)`.
 - **GPIO46 (WS2812) is a strapping pin** but works as an output post-boot. Added 2026-07-09.
 - **Battery ADC is GPIO 2, not GPIO 1** — an earlier hardware table listed GPIO1;
   corrected in commit d50b320. Added 2026-07-09.
+- **RGB565 byte order: use `CONFIG_LV_COLOR_16_SWAP=y`** (DEV_KIT E-10 case B). Without
+  it, saturated colors look like a clean channel rotation (red→blue, green→red,
+  blue→green), which invites a hand-scrambled palette that breaks every non-saturated
+  color. Added 2026-10-02.
+- **No PSRAM → watch the heap.** With Wi-Fi + TLS + LVGL's default static 64 KB pool the
+  minimum free heap hit 13 KB. `CONFIG_LV_MEM_CUSTOM=y` + `CONFIG_MBEDTLS_DYNAMIC_BUFFER`
+  (+ free config/CA) brought it to ~100 KB min / 113 KB free. Contiguous blocks stay
+  < 32 KB once networking is up — allocate big buffers in strips. Added 2026-10-02.
+- **Opening the USB-Serial-JTAG port from macOS resets the chip** (pyserial with DTR/RTS
+  set False before open still resets). Expect a reboot when attaching a logger. Added
+  2026-10-02.
 
 ---
 

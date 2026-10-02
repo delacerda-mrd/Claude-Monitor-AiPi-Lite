@@ -1,179 +1,162 @@
-# Claude Meter — AiPi-Lite
+# Claude Meter v2 — AiPi-Lite
 
 ![Claude Meter on AIPI-Lite](aipilite_cm.webp)
 
-ESP32-S3 firmware for a physical Claude usage-meter gadget. Polls the Anthropic API and displays session (5h) and weekly (7d) rate-limit utilization on a 1.44" ST7735 128×128 TFT LCD.
+A pocket-sized Claude usage meter. An ESP32-S3 (AI-Pi Lite) with a 1.44" 128×128
+screen shows your **session (5 h)** and **weekly (7 d)** usage as live rings, tells you
+whether you're burning faster than the window allows, charts the last five hours,
+and has an animated Clawd who reacts to how hard you're going. One button, an RGB
+LED, a speaker and a LiPo battery round it out.
 
-## Quick start
+## What's on the screen
+
+A tap cycles the pages; holding the button (≥ 0.6 s) refreshes now.
+
+| Page | Shows |
+|---|---|
+| **Rings** | Outer ring = 5 h, inner = 7 d, colored sage → amber (60 %) → red (85 %). Big session %, time to reset; weekly % and reset in the corners |
+| **Pace** | Per window: bar + an *even-pace* marker (where you'd be if you spread usage evenly) and a verdict — `+12 ahead`, `on pace`, `8 under` |
+| **Trend** | Last 5 h of session (coral) and weekly (grey); projection at reset, or `max @3:55` if you're on course to hit the cap |
+| **Clawd** | Mood pet: chill → cooking → thinking → whoa → asleep at the limit; dances when a window resets |
+| **Device** | Wi-Fi, battery, uptime, firmware, IP, data source, token host + a QR to the dashboard |
+
+The top bar always shows the clock, page dots, a sync spinner, Wi-Fi, charging and
+battery. The screen blanks after 3 min idle (configurable); the first press wakes it.
+
+## How it gets the numbers
+
+The device holds a Claude Code OAuth token and polls
+`GET https://api.anthropic.com/api/oauth/usage` — the endpoint behind Claude Code's
+`/usage`, which **costs no tokens** — every 90 s on USB power, 5 min on battery. If
+that endpoint misbehaves (e.g. answers 429) it falls back to v1's method, a 1-token
+`/v1/messages` call whose rate-limit headers carry the same numbers.
+
+Tokens expire, so a host keeps the device fed: `push_claude_token.py` pushes a fresh
+token every 4 h, and the device pings `notify_listener.py` the moment it comes online
+or its token is rejected. The device remembers which host pushed last and pings that
+one.
+
+## Build & flash (macOS)
+
+One-time: ESP-IDF **v5.4.4** in `~/esp/esp-idf`, installed against Homebrew
+`python@3.12` (`brew install cmake ninja dfu-util python@3.12`, then
+`PATH="/opt/homebrew/opt/python@3.12/libexec/bin:$PATH" ./install.sh esp32s3`).
 
 ```bash
-# 1. Create secrets
-cp main/secrets.h.example main/secrets.h
-# Edit: WIFI_SSID, WIFI_PASSWORD, CLAUDE_TOKEN
+tools/idf.sh build                 # wrapper pins the IDF Python env
+tools/idf.sh flash monitor         # USB, port auto-detected (/dev/cu.usbmodem*)
 
-# 2. Build & flash
-source ~/esp/esp-idf/export.sh
-idf.py build
-idf.py -p /dev/ttyACM0 flash monitor
+# Over the air (after the first USB flash):
+curl --data-binary @build/claude_meter_v2.bin http://claude-meter.local/ota
 ```
 
-## Token push (keep the device running)
+`main/secrets.h` is **optional**: Wi-Fi credentials and the token live in NVS. A
+factory-fresh board with no `secrets.h` opens a setup access point (below); copy
+`main/secrets.h.example` only to pre-seed one, or to set `CFG_AUTH_SECRET`.
 
-The OAuth token expires. `push_claude_token.py` runs on a nearby PC to push a fresh token to the device every 4 hours.
+`tools/shot.sh` saves what the screen shows right now as a PNG (via
+`/api/screen.bmp`) — handy for UI work without looking at the desk.
 
-### How it works
+## First-time Wi-Fi (setup mode)
 
-1. Reads your Claude Code OAuth token from `~/.claude/.credentials.json`
-2. If fewer than `--margin` hours remain until expiry (default 6), forces a refresh via `claude -p ping`, re-reads, and **refuses to push a token that is still expired** — so a transient refresh failure never poisons the device with a dead token
-3. POSTs the fresh token to the device, trying mDNS (`claude-meter.local`) first and **falling back to a cached/explicit IP with retries** — a flaky mDNS lookup no longer loses a whole cycle
-4. Caches the device's resolved IP (`~/.cache/claude-meter-ip`) after a successful hostname push, so the fallback self-heals across DHCP changes
-5. The device saves the token to NVS and polls immediately
+With no stored network (or one it can't join for 20 s) the meter starts an access
+point `Claude-Meter-XXXX`. Its screen shows a **QR code — scan it to join** — plus
+the password (fresh each boot, shown only on the device). Your phone then opens the
+setup page automatically; enter your Wi-Fi and the meter restarts and joins it.
 
-Exit codes: `0` ok · `1` config/credentials error · `2` token not fresh (not pushed) · `3` push failed.
+## Token pipeline on the Mac
 
-### Find your device
-
-The device advertises itself as `claude-meter.local` via mDNS. To use this auto-discovery you need mDNS resolution working on the push PC:
-
-**Avahi (most distros):**
 ```bash
-sudo apt install avahi-daemon libnss-mdns
-# Avahi should start automatically; verify it's running:
-systemctl is-active avahi-daemon
-# If inactive or masked:
-#   sudo systemctl unmask avahi-daemon.socket
-#   sudo systemctl start avahi-daemon
-ping claude-meter.local    # final check
+host/macos/install.sh            # install + start the two launchd agents
+host/macos/install.sh status     # state + recent log lines
+host/macos/install.sh uninstall
 ```
 
-**systemd-resolved (systemd-based distros):**
+- `com.claude-meter.token-push` runs `push_claude_token.py` at login and every 4 h.
+- `com.claude-meter.notify-listener` keeps `notify_listener.py` on port 5555.
+
+On macOS the script reads Claude Code's credentials from the Keychain item
+**"Claude Code-credentials"**; if fewer than 6 h remain it back-dates the expiry and
+runs `claude -p ping` so the CLI rotates the token, and it refuses to push a dead one.
+
+Two one-time macOS grants:
+1. **Local Network** — System Settings → Privacy & Security → Local Network → enable
+   **python3**. Without it the push fails with `[Errno 65] No route to host`.
+2. **Keychain** — if asked whether `security` may read "Claude Code-credentials",
+   choose *Always Allow*.
+
+Logs: `~/Library/Logs/com.claude-meter.*.log`. Manual push:
+`python3 push_claude_token.py [--ip 192.168.x.y] [--secret S] [--margin H]`.
+`host/macos/Copy Claude Token.command` copies a fresh token to the clipboard for
+pasting into the dashboard by hand.
+
+Exit codes: `0` ok · `1` credentials error · `2` token not fresh (not pushed) · `3` push failed.
+
+### Linux host (alternative)
+
+The systemd units are in `host/linux/`. Credentials come from
+`~/.claude/.credentials.json`.
+
 ```bash
-sudo systemd-resolve --set-mdns=yes --interface=wlan0
-resolvectl query claude-meter.local    # verify
-```
-
-If mDNS isn't available, find the device's IP from your router's DHCP lease table or the serial monitor output, then pass it explicitly (see below).
-
-### Setup (systemd timer)
-
-```bash
-# Install the script to a stable path
-mkdir -p ~/scripts
-cp push_claude_token.py ~/scripts/
-chmod +x ~/scripts/push_claude_token.py
-
-# Install the version-controlled unit files (see host/)
-mkdir -p ~/.config/systemd/user
-cp host/claude-token-push.service host/claude-token-push.timer ~/.config/systemd/user/
-
-# Enable and start
+mkdir -p ~/scripts ~/.config/systemd/user
+cp push_claude_token.py notify_listener.py ~/scripts/
+cp host/linux/*.service host/linux/*.timer ~/.config/systemd/user/
 systemctl --user daemon-reload
-systemctl --user enable --now claude-token-push.timer
+systemctl --user enable --now claude-token-push.timer claude-notify-listener.service
 ```
 
-> **Notes**
-> - `Environment=CLAUDE_BIN=…` matters: under `systemctl --user` the `claude` CLI (installed in `~/.local/...`) may not be on `PATH`, which is what silently broke refreshes before.
-> - The script uses mDNS by default and auto-falls-back to the cached device IP, so you usually need nothing else. For a hard guarantee, give the device a DHCP reservation and add `--ip <DEVICE-IP>` (or `Environment=CLAUDE_METER_IP=<DEVICE-IP>`) to `ExecStart`.
-> - If the device requires auth (see *Web config*), add `--secret <SECRET>` or `Environment=CLAUDE_METER_SECRET=<SECRET>`.
+Needs working mDNS (`avahi-daemon` + `libnss-mdns`) or `--ip`. Keep
+`Environment=CLAUDE_BIN=%h/.local/bin/claude` — under systemd `claude` may not be on
+`PATH`.
 
-### Requirements on the PC
+## Web dashboard
 
-- Python 3
-- `claude` CLI installed and authenticated (the script runs `claude -p ping` to force token refresh)
-- Network access to the device (mDNS via `claude-meter.local`, or a known IP)
+`http://claude-meter.local/` (or the IP / QR on the Device page): live rings, pace,
+5 h chart, device stats (incl. heap), settings — time zone, 12/24 h clock, volume,
+mute, quiet hours, brightness on USB / battery, screen-off delay — plus token paste,
+Wi-Fi change, firmware upload, *Next page* and *Screenshot*.
 
-### Manual push
+API: `GET /api/status` · `GET /api/screen.bmp` · `POST /` (`token=`) ·
+`POST /api/settings` · `POST /api/wifi` · `POST /api/poll` · `POST /api/button` ·
+`POST /ota`.
 
-```bash
-# mDNS (auto-discovery), with an IP fallback for when mDNS is flaky
-python3 push_claude_token.py --ip 192.168.1.42
+> **⚠️ Security:** without `CFG_AUTH_SECRET`, anyone on your LAN can read usage,
+> change settings, replace the token or flash firmware. Fine on a trusted home
+> network; otherwise define the secret (the dashboard asks for it once; the push
+> script takes `--secret` / `CLAUDE_METER_SECRET`).
 
-# Explicit URL only
-python3 push_claude_token.py --url http://192.168.1.42/
+## Firmware updates & rollback
 
-# Other flags: --secret <s>  --margin <hours>  --retries <n>  --creds <path>
-```
+Two 2 MB OTA slots. An uploaded image boots on trial and confirms itself after 15 s
+online; if it crashes or can't get online first, the next reset rolls back to the
+previous image. USB flashing is never rolled back (it's the recovery path).
 
-## Notify listener (instant push on auth failure)
+## Sounds & lights
 
-Waiting up to 4 hours for the next `push_claude_token.py` timer tick is annoying if the device's token has actually gone bad. `notify_listener.py` closes that gap: the firmware's `notify_host_online()` fires a fire-and-forget GET/POST to a fixed URL whenever a poll comes back `POLL_AUTH` (see `NOTIFY_HOST_URL` in `main/main.c`), and this listener answers it by immediately running `push_claude_token.py` in the background.
-
-It's meant to run on whatever host `NOTIFY_HOST_URL` points at — update that constant and rebuild if you move it to a different machine.
-
-### Setup (systemd user service)
-
-```bash
-cp notify_listener.py ~/scripts/
-chmod +x ~/scripts/notify_listener.py
-
-# Install the version-controlled unit file (see host/)
-cp host/claude-notify-listener.service ~/.config/systemd/user/
-
-systemctl --user daemon-reload
-systemctl --user enable --now claude-notify-listener.service
-```
-
-> **Note:** the response must include `Content-Length` — ESP-IDF's `esp_http_client` (unlike curl) doesn't accept a bodyless-until-connection-close HTTP/1.0 response as complete, and will log `ESP_ERR_HTTP_INCOMPLETE_DATA` if it's missing.
+Routine polls are silent. Boot C–E–G · refresh tick · token saved C–F · crossing
+60 % G–C · crossing 85 % three beeps · error E–C · window reset C–E–G–C · setup AP up
+G–D. The LED (very dim) is green / amber / red by the busier window, red on errors,
+breathes red at the limit and blue in setup mode.
 
 ## Hardware
 
 | Component | Pins |
 |---|---|
-| ST7735 128×128 | CLK=16, MOSI=17, CS=15, DC=7, RST=18, BL=3 |
-| WS2812 LED | GPIO 46 |
-| Button | GPIO 42 (active-low, force poll) |
-| Battery ADC | GPIO 2 (ADC1_CH1) |
-| Power hold | GPIO 10 |
-| ES8311 codec (I2C) | SDA=5, SCL=4 |
-| Speaker amp enable | GPIO 9 |
-| I2S audio | MCLK=6, BCLK=14, WS=12, DOUT=11 |
+| ST7735 128×128 | CLK 16, MOSI 17, CS 15, DC 7, RST 18, BL 3 |
+| WS2812 LED | 46 |
+| Button | 42 (active-low) |
+| Battery ADC | 2 (ADC1_CH1) |
+| Power hold | 10 |
+| ES8311 codec (I2C) | SDA 5, SCL 4 |
+| Speaker amp enable | 9 |
+| I2S | MCLK 6, BCLK 14, WS 12, DOUT 11 |
 
-## Audio
+Full reference: `docs/BOARD_REFERENCE.md`. Behavior and internals:
+`docs/ARCHITECTURE.md`.
 
-The onboard ES8311 codec + speaker play notification tones for key events.
+## Credits
 
-| Event | Sound |
-|---|---|
-| Boot (Wi‑Fi + SNTP ready) | C–E–G rising arpeggio |
-| Button press | short C7 tick |
-| Token pushed via web | C–F ascending |
-| Usage crosses 60% | G–C ascending pair |
-| Usage crosses 85% | three staccato beeps |
-| API error | E–C descending |
-
-Routine poll successes are silent — only threshold crossings and errors are audible.
-
-## Web config
-
-`http://claude-meter.local/` (or the device's IP) — view stats (now including the running firmware version + active OTA slot), paste a new token. POST a `token=` field to update the token directly.
-
-### Optional auth
-
-Define `CFG_AUTH_SECRET` in `main/secrets.h` to require an `X-Auth: <secret>` header on the mutating endpoints (token update and OTA). When unset, they stay open (legacy behavior). The push script passes it via `--secret` / `CLAUDE_METER_SECRET`.
-
-> **⚠️ Security:** Without `CFG_AUTH_SECRET`, the config endpoint has no authentication — anyone on your LAN can read your usage stats or overwrite the Claude API token (which grants full access to your Claude account). On a trusted home network this is low-risk; set a secret or don't expose the device to a shared/public network.
-
-## Firmware update (OTA)
-
-The device runs from a two-slot OTA partition layout (16 MB flash), so after the first USB flash you can update over Wi-Fi — no cable:
-
-```bash
-idf.py build
-curl --data-binary @build/claude_meter_v2.bin \
-     -H 'X-Auth: <secret-if-set>' \
-     http://claude-meter.local/ota
-```
-
-The device streams the image into the inactive slot, verifies it, flips the boot partition, and reboots. The stats page shows the new version + slot + OTA state (`fw <ver> · ota_N · valid`) to confirm.
-
-> The first flash after switching to the OTA layout **must be over USB** (`idf.py flash`) — it rewrites the partition table. NVS keeps its offset, so a token already saved on the device survives.
-
-### Auto-rollback
-
-Rollback is enabled (`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`). An OTA image boots in `pending` state; once it runs stably for ~15 s in the online main loop it self-confirms (`esp_ota_mark_app_valid_cancel_rollback`) and the stats page shows `valid`. If a bad image crashes/hangs before confirming, the **next reset reverts to the previous working slot** automatically. The Wi-Fi-failure path deliberately does *not* confirm, so an update that breaks networking also rolls back on the next power cycle.
-
-> Because rollback support lives in the **bootloader**, enabling it requires one USB flash (OTA updates the app only, not the bootloader). After that, OTA updates are rollback-protected. A USB flash is never subject to rollback (it's the recovery path).
-
-## Architecture
-
-See [CLAUDE.md](CLAUDE.md) for detailed architecture notes.
+Clawd animations from [claudepix](https://claudepix.vercel.app) (via the sibling
+Clawdmeter project). JetBrains Mono (OFL, `main/fonts/OFL-JetBrainsMono.txt`).
+Styrene font files carried over from the Clawdmeter project. Palette after
+Clawdmeter's Anthropic-colors theme.
