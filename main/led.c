@@ -12,6 +12,9 @@
 
 static led_strip_handle_t s_strip;
 static volatile led_state_t s_state = LED_BOOT;
+static volatile bool s_listening;
+
+void led_set_listening(bool on) { s_listening = on; }
 
 void led_init(void)
 {
@@ -44,14 +47,21 @@ void led_tick(void)
     static int64_t     last_us;
     if (!s_strip) return;
 
-    led_state_t st = s_state;
-    bool breathe = (st == LED_LIMIT || st == LED_SETUP);
+    led_state_t st = s_listening ? (led_state_t)-2 : s_state;
+    bool breathe = (st == LED_LIMIT || st == LED_SETUP || s_listening);
     int64_t now = esp_timer_get_time();
     if (st == last && (!breathe || now - last_us < 50000)) return;
     last = st;
     last_us = now;
 
     uint8_t r = 0, g = 0, b = 0;
+    if (s_listening) {                          /* cyan breathe, a bit brighter */
+        int ph = (int)((now / 1000) % 1200);
+        int v = 1 + (ph < 600 ? ph * 5 / 600 : (1200 - ph) * 5 / 600);
+        led_strip_set_pixel(s_strip, 0, 0, v, v);
+        led_strip_refresh(s_strip);
+        return;
+    }
     switch (st) {
     case LED_BOOT:  b = 1;        break;
     case LED_OK:    g = 1;        break;

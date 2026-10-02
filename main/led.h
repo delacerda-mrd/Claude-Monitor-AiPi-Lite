@@ -21,3 +21,4 @@ void led_init(void);
 void led_show(led_state_t s);
 void led_show_for_pct(int worst_pct);
 void led_tick(void);
+void led_set_listening(bool on);    /* cyan breathe overlay while listening */

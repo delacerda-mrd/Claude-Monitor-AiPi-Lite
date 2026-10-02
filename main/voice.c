@@ -19,7 +19,7 @@
 static const char *TAG = "voice";
 
 #define PACK_MAGIC      "CMVP"
-#define PACK_RATE       24000
+#define PACK_RATE       16000
 #define NAME_LEN        20
 #define GAP_MS          55          /* between clips                     */
 #define PAUSE_MS        260         /* "." token                          */

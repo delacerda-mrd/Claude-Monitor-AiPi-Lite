@@ -136,6 +136,19 @@ Level colors: sage < 60 % ≤ amber < 85 % ≤ red. Palette = HY3 theme (Anthrop
 Boot blue · green / amber / red by the worse window · red on error · **slow red
 breathe at ≥ 100 %** · **slow blue breathe in setup mode**.
 
+## Voice control (v2.2) — offline "Jarvis"
+`listen.c`: mic (ES8311 ADC, GPIO13, 16 kHz, 24 dB PGA) → feed task (core 0) → esp-sr AFE
+(VAD + WakeNet9 `wn9_jarvis_tts`) → detect task (core 1). On "Jarvis": "Yes?", LED
+cyan, *Listening…* pill; MultiNet7 `mn7_en` gets a 6 s window for ~40 phrases (usage,
+reset, weekly, refresh, pace, pages, mute/unmute, volume, screen off, time, battery,
+who/thanks). Unmatched speech → "Sorry, I didn't catch that." (`handle_unknown()` is the
+hook for a future Mac brain). Wake words are ignored while the meter speaks. Listening
+runs on USB power (setting `listen`, default on) and on battery only if `listen_batt`.
+TX stays enabled while listening (S3 duplex RX is clocked by TX). Models: `model`
+partition @0x920000 (USB flash writes srmodels.bin). Diagnostics: `/api/status`
+`listen` (state, last heard, mic dBFS), `GET /api/rec.wav` (last attempt's raw audio),
+`POST /api/say {"listen":true}` (skip the wake word).
+
 ## Audio & voice (v2.1)
 The meter **talks**. A clip pack built on the Mac with `say` (`tools/make_voice.py`,
 default voice Daniel, 24 kHz µ-law, 127 clips ≈ 106 s ≈ 2.4 MB) lives in the `voice`

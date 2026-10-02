@@ -27,6 +27,7 @@
 #include "driver/gpio.h"
 #include "es8311.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "voice.h"
 
 static const char *TAG = "audio";
@@ -47,7 +48,7 @@ static const char *TAG = "audio";
 
 #define PA_PIN            GPIO_NUM_9
 
-#define SAMPLE_RATE       24000
+#define SAMPLE_RATE       16000          /* esp-sr (wake word) needs 16 kHz */
 #define MCLK_MULTIPLE     256
 #define MCLK_FREQ_HZ      (SAMPLE_RATE * MCLK_MULTIPLE)
 
@@ -62,7 +63,11 @@ static const char *TAG = "audio";
 static i2s_chan_handle_t  tx_handle;
 static i2s_chan_handle_t  rx_handle;
 static bool               tx_enabled;    /* TX starts disabled at init     */
-static bool               audio_active;  /* RX/MCLK + codec powered for use */
+static bool               s_rx_on;       /* RX channel enabled = MCLK running   */
+static bool               s_dac_on;      /* DAC unmuted for playback            */
+static volatile bool      s_mic_on;      /* microphone wanted: keep MCLK + ADC  */
+static volatile bool      s_playing;     /* speaker output in progress          */
+static int                s_mic_slot = -1; /* I2S slot carrying the ADC (auto)  */
 static es8311_handle_t    es_handle;
 static int16_t            sine_table[SINE_TABLE_SIZE];
 
@@ -161,21 +166,32 @@ static void pa_set(bool on)
  * sounds that play a few times an hour. Idempotent. */
 static void audio_resume(void)
 {
-    if (audio_active) return;
-    i2s_channel_enable(rx_handle);                 /* MCLK runs again */
+    if (s_dac_on) return;
+    if (!s_rx_on) {
+        i2s_channel_enable(rx_handle);             /* MCLK runs again */
+        s_rx_on = true;
+        vTaskDelay(pdMS_TO_TICKS(5));              /* MCLK / codec settle */
+    }
     if (es_handle) es8311_voice_mute(es_handle, false);
-    vTaskDelay(pdMS_TO_TICKS(5));                  /* MCLK / codec settle */
-    audio_active = true;
+    s_dac_on = true;
+    s_playing = true;
 }
 
-/* Power the codec back down after playback: mute and stop MCLK. Idempotent. */
+/* Power the codec back down after playback: mute the DAC, and stop MCLK
+ * unless the microphone still needs it. Idempotent. */
 static void audio_suspend(void)
 {
-    if (!audio_active) return;
-    if (tx_enabled) { i2s_channel_disable(tx_handle); tx_enabled = false; }
-    if (es_handle) es8311_voice_mute(es_handle, true);
-    i2s_channel_disable(rx_handle);                /* MCLK stops */
-    audio_active = false;
+    /* TX also clocks the mic (duplex I2S): keep it running while listening */
+    if (tx_enabled && !s_mic_on) { i2s_channel_disable(tx_handle); tx_enabled = false; }
+    if (s_dac_on) {
+        if (es_handle) es8311_voice_mute(es_handle, true);
+        s_dac_on = false;
+    }
+    s_playing = false;
+    if (s_rx_on && !s_mic_on) {
+        i2s_channel_disable(rx_handle);            /* MCLK stops */
+        s_rx_on = false;
+    }
 }
 
 /* Fill sine_table with one cycle of sin(x), scaled to AMPLITUDE */
@@ -243,7 +259,11 @@ static esp_err_t es8311_init_codec(void)
         ret = es8311_voice_volume_set(es_handle, 70, NULL);
         if (ret != ESP_OK) goto fail;
 
-        ret = es8311_microphone_config(es_handle, false);
+        ret = es8311_microphone_config(es_handle, false);   /* analog MEMS mic */
+        if (ret != ESP_OK) goto fail;
+        /* The step ESPHome's port skipped: the ADC path needs real PGA gain
+         * for a wake word to trigger. AFE's AGC handles the rest. */
+        ret = es8311_microphone_gain_set(es_handle, ES8311_MIC_GAIN_24DB);
         if (ret != ESP_OK) goto fail;
 
         ret = es8311_voice_mute(es_handle, false);
@@ -288,7 +308,10 @@ static esp_err_t i2s_init(void)
 {
     i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM,
                                                             I2S_ROLE_MASTER);
-    chan_cfg.auto_clear = false;
+    /* auto_clear: an idle TX sends silence instead of replaying its last DMA
+     * buffers. Needed because TX must keep running while the mic listens:
+     * in S3 full-duplex I2S the RX side is clocked by the TX unit. */
+    chan_cfg.auto_clear = true;
     ESP_ERROR_CHECK(i2s_new_channel(&chan_cfg, &tx_handle, &rx_handle));
 
     i2s_std_config_t std_cfg = {
@@ -318,7 +341,7 @@ static esp_err_t i2s_init(void)
      * MCLK runs for the codec's init-time I2C access; audio_init() suspends
      * it once init is done, and playback resumes it on demand. */
     ESP_ERROR_CHECK(i2s_channel_enable(rx_handle));
-    audio_active = true;
+    s_rx_on = true;
 
     ESP_LOGI(TAG, "I2S simplex TX ready");
     return ESP_OK;
@@ -364,6 +387,7 @@ esp_err_t audio_init(void)
     }
 
     /* Idle until first playback — stops MCLK and mutes the codec. */
+    s_dac_on = true;                /* es8311 init left it unmuted */
     audio_suspend();
 
     audio_q = xQueueCreate(4, sizeof(audio_job_t));
@@ -537,6 +561,61 @@ bool audio_say_async(const char *script)
     return true;
 }
 
+/* ---- microphone (listen task) ---- */
+void audio_mic_enable(bool on)
+{
+    if (!audio_mutex) return;
+    xSemaphoreTake(audio_mutex, portMAX_DELAY);
+    s_mic_on = on;
+    if (on) {
+        if (!s_rx_on) { i2s_channel_enable(rx_handle); s_rx_on = true; }
+        if (!tx_enabled) { i2s_channel_enable(tx_handle); tx_enabled = true; }  /* clocks RX */
+    } else if (!s_dac_on) {
+        if (tx_enabled) { i2s_channel_disable(tx_handle); tx_enabled = false; }
+        if (s_rx_on) { i2s_channel_disable(rx_handle); s_rx_on = false; }
+    }
+    xSemaphoreGive(audio_mutex);
+    ESP_LOGI(TAG, "microphone %s", on ? "on" : "off");
+}
+
+bool audio_is_playing(void) { return s_playing; }
+
+int audio_mic_read(int16_t *mono, int frames)
+{
+    static int16_t st[512 * 2];
+    static int64_t e[2];
+    static int     probes;
+    if (frames > 512) frames = 512;
+    if (!s_rx_on) return 0;
+    size_t got = 0;
+    esp_err_t rerr = i2s_channel_read(rx_handle, st, frames * 2 * sizeof(int16_t), &got, pdMS_TO_TICKS(200));
+    if (rerr != ESP_OK) {
+        static int64_t last_log;
+        int64_t now = esp_timer_get_time();
+        if (now - last_log > 5000000) {
+            last_log = now;
+            ESP_LOGW(TAG, "mic read failed: %s (got %u bytes, rx_on=%d)", esp_err_to_name(rerr), (unsigned)got, s_rx_on);
+        }
+        if (got == 0) return 0;
+    }
+    int n = got / (2 * sizeof(int16_t));
+    if (s_mic_slot < 0) {
+        /* Which slot carries the ES8311 ADC? Measure, don't guess. */
+        for (int i = 0; i < n; i++) {
+            e[0] += (int32_t)st[2 * i] * st[2 * i] >> 8;
+            e[1] += (int32_t)st[2 * i + 1] * st[2 * i + 1] >> 8;
+        }
+        if (++probes >= 60) {
+            s_mic_slot = e[1] > e[0] ? 1 : 0;
+            ESP_LOGI(TAG, "mic slot %s (energy L=%lld R=%lld)",
+                     s_mic_slot ? "R" : "L", (long long)e[0], (long long)e[1]);
+        }
+    }
+    int slot = s_mic_slot < 0 ? 0 : s_mic_slot;
+    for (int i = 0; i < n; i++) mono[i] = st[2 * i + slot];
+    return n;
+}
+
 /* ---- streaming (audio task, under audio_mutex, codec resumed) ---- */
 static size_t s_stream_bytes;
 static esp_err_t s_stream_err;
@@ -545,11 +624,12 @@ void audio_stream_begin(void)
 {
     s_stream_bytes = 0;
     s_stream_err = ESP_OK;
-    if (tx_enabled) { i2s_channel_disable(tx_handle); tx_enabled = false; }
     pa_set(true);
     vTaskDelay(pdMS_TO_TICKS(5));
-    i2s_channel_enable(tx_handle);
-    tx_enabled = true;
+    if (!tx_enabled) {
+        i2s_channel_enable(tx_handle);
+        tx_enabled = true;
+    }
 }
 
 void audio_stream_write(const int16_t *stereo, size_t frames)
@@ -562,15 +642,17 @@ void audio_stream_write(const int16_t *stereo, size_t frames)
 
 void audio_stream_end(void)
 {
-    /* auto_clear is off: the DMA ring would replay its last buffers as a
-     * buzz. Flush it with ~120 ms of silence before cutting the amp. */
+    /* Let the DMA ring drain (auto_clear then sends silence), cut the amp,
+     * and stop TX only if the mic doesn't need its clock. */
     static const int16_t zeros[256 * 2];
-    for (int i = 0; i < 12; i++) audio_stream_write(zeros, 256);
+    for (int i = 0; i < 4; i++) audio_stream_write(zeros, 256);
     pa_set(false);
-    i2s_channel_disable(tx_handle);
-    tx_enabled = false;
-    ESP_LOGI(TAG, "stream: %u bytes written, err=%s, PA gpio=%d",
-             (unsigned)s_stream_bytes, esp_err_to_name(s_stream_err), gpio_get_level(PA_PIN));
+    if (!s_mic_on) {
+        i2s_channel_disable(tx_handle);
+        tx_enabled = false;
+    }
+    ESP_LOGI(TAG, "stream: %u bytes written, err=%s",
+             (unsigned)s_stream_bytes, esp_err_to_name(s_stream_err));
 }
 
 void audio_set_volume(int vol)

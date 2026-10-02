@@ -8,8 +8,17 @@
 
 ## Current Status (updated 2026-10-02)
 
-**Phase:** **v2.1 deployed** (fw 2.1.0, USB-flashed for the new `voice` partition) —
-the meter now talks (Daniel voice pack installed). Mac is
+**Phase:** **v2.2 deployed** (fw 2.2.0) — offline **"Jarvis" voice control** works
+end to end but command recognition is unreliable (tuning in progress). Talks (16 kHz
+Daniel pack, "jarvis" style). PSRAM on, both buttons, real charge pins.
+
+**Resume here (voice tuning):** wake word ≈ 100 % (12/12). Commands hit ~4 of 9
+(p 0.14–0.23); misses log `no command (speech heard … peak −10 dBFS, best guess "")`.
+Suspects: clipping at 24 dB PGA with the user close, speaker/mic bleed, or no NS/AGC in
+the AFE pipeline (it runs VAD+WakeNet only). **Next step:** say a command, then
+`curl -o take.wav http://192.168.66.125/api/rec.wav` (raw mic from ~1 s before the wake
+to the end of the window) → check peak/clipping/level, `afplay` it. Then try PGA 18 dB,
+`cfg->ns_init/agc_init = true`, `set_det_threshold`. Mac is
 now the only machine — the Linux box is retired; toolchain + token pipeline moved here.
 
 **Known working (verified on hardware 2026-10-02):** v2 boots without `secrets.h`
@@ -44,6 +53,18 @@ min ~91–100 KB (59 KB under a screenshot burst). Details: BRINGUP Phase 7.
 ---
 
 ## Session Log (newest first)
+
+### 2026-10-02 (Mac, ~03:00) — v2.2: offline "Jarvis" voice control
+User: wake word "R1" if easy, else Jarvis; keep it offline, a Mac "brain" maybe later.
+"R1" isn't offered by esp-sr (custom words are a paid training service, and it's too
+short) → `wn9_jarvis_tts` + `mn7_en` (~40 phrases, 20 commands) in a new 4 MB `model`
+partition; app slots grew to 3 MB (app 2.84 MB). Audio moved to 16 kHz (esp-sr rate);
+voice pack regenerated (146 clips, `--style jarvis`). Found on hardware: (1) internal
+RAM exhaustion broke TLS → mbedTLS/Wi-Fi to PSRAM (kit E-45); (2) the mic got no data
+because S3 duplex RX is clocked by TX → TX kept running with auto_clear (E-44);
+(3) ES8311 mono ADC appears on both slots. Wake word works reliably; commands are hit or
+miss — added faster listen start, pace variants, miss diagnostics and `/api/rec.wav`.
+Not committed until wrap (user went to bed).
 
 ### 2026-10-02 (Mac, ~02:30) — Board deep-dive: PSRAM, 2nd button, real charge pins
 User: "look up the tech details of this board online… go all out." Sources: stock

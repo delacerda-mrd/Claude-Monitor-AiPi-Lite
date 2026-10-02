@@ -33,6 +33,7 @@
 #include "audio.h"
 #include "board.h"
 #include "led.h"
+#include "listen.h"
 #include "net.h"
 #include "power.h"
 #include "settings.h"
@@ -366,6 +367,7 @@ void app_main(void)
     if (audio_init() != ESP_OK)
         ESP_LOGW(TAG, "audio init failed - continuing without sound");
     voice_init();                   /* tones if no pack is installed */
+    listen_init();                  /* "Jarvis" -- off if no models are flashed */
     button_init();
     power_sample();
     net_start();

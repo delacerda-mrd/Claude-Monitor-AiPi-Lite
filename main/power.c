@@ -160,6 +160,8 @@ void screen_init(esp_lcd_panel_handle_t panel)
 
 bool screen_is_on(void) { return s_on; }
 void screen_wake(void)  { s_wake_req = true; }
+static volatile bool s_sleep_req;
+void screen_sleep(void) { s_sleep_req = true; }
 void screen_set_dim_override(int pct) { s_dim_override = pct; }
 
 static void apply_backlight(void)
@@ -198,6 +200,10 @@ void screen_tick(void)
         s_wake_req = false;
         s_last_activity_us = now;
         screen_set(true);
+    }
+    if (s_sleep_req) {
+        s_sleep_req = false;
+        screen_set(false);
     }
     settings_t c;
     settings_get(&c);

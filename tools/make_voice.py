@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Build the meter's voice pack with macOS text-to-speech.
 
-    tools/make_voice.py [--voice Daniel] [--rate 180] [--out build/voice.bin]
+    tools/make_voice.py [--voice Daniel] [--rate 180] [--style jarvis|plain] [--out build/voice.bin]
     tools/make_voice.py --audition "Session at forty two percent."   # hear it on the Mac
 
 Upload to a running meter (no USB needed):
     curl --data-binary @build/voice.bin http://claude-meter.local/voice
 
-Every clip is rendered by `say` at 24 kHz / 16-bit mono (the codec's rate, so the
+Every clip is rendered by `say` at 16 kHz / 16-bit mono (the codec's rate, so the
 device never resamples), trimmed of leading/trailing silence, peak-normalized and
 G.711 mu-law encoded (8 bits/sample). The device strings clips together into
 sentences; see main/voice.c for the script format.
@@ -26,7 +26,7 @@ import sys
 import tempfile
 import wave
 
-RATE = 24000
+RATE = 16000          # the codec runs at 16 kHz (esp-sr's rate) since v2.2
 
 # Numbers as whole words for natural prosody: "#42" -> clip "42".
 NUM_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
@@ -75,6 +75,26 @@ PHRASES = {
     "on_pace":     "You're on pace.",
     "room":        "Plenty of room.",
     "test":        "This is how I sound.",
+    # voice control (v2.2)
+    "yes":            "Yes?",
+    "sorry":          "Sorry, I didn't catch that.",
+    "refreshing":     "Checking now.",
+    "session_resets": "Your session resets in",
+    "weekly_resets":  "Your week resets in",
+    "quiet_on":       "Quiet mode on.",
+    "quiet_off":      "Sound is back on.",
+    "louder":         "Louder.",
+    "softer":         "Quieter.",
+    "night":          "Goodnight.",
+    "its":            "It's",
+    "oclock":         "o'clock.",
+    "oh":             "oh",
+    "am":             "A M.",
+    "pm":             "P M.",
+    "welcome":        "You're welcome.",
+    "intro":          "I'm R1. I keep an eye on your Claude usage.",
+    "battery_at":     "Battery at",
+    "charging_now":   "and charging.",
 }
 for _n in range(101):
     PHRASES[str(_n)] = number_words(_n)
@@ -100,6 +120,18 @@ def trim_and_normalize(pcm, thresh=500, pad=int(RATE * 0.015), peak=0.89):
     return array.array("h", (int(max(-32768, min(32767, s * g))) for s in pcm))
 
 
+def style_jarvis(pcm):
+    """A faint synthetic 'AI' sheen: two short delayed copies (9 and 16 ms)
+    make a light comb/chorus, like a voice through a small studio room or an
+    intercom. Subtle by design -- it should read as polished, not robotic."""
+    d1, d2 = int(RATE * 0.009), int(RATE * 0.016)
+    out = array.array("h", pcm)
+    for i in range(len(pcm)):
+        v = pcm[i] + (0.22 * pcm[i - d1] if i >= d1 else 0) + (0.14 * pcm[i - d2] if i >= d2 else 0)
+        out[i] = int(max(-32768, min(32767, v / 1.2)))
+    return out
+
+
 def mulaw(s):
     """G.711 mu-law encode one 16-bit sample."""
     BIAS, CLIP = 0x84, 32635
@@ -116,12 +148,15 @@ def mulaw(s):
     return ~(sign | (exp << 4) | mant) & 0xFF
 
 
-def build(voice, rate, out):
+def build(voice, rate, out, style):
     clips = []
     with tempfile.TemporaryDirectory() as td:
         for i, (name, text) in enumerate(PHRASES.items()):
             assert len(name) < 20, name
-            pcm = trim_and_normalize(render(text, voice, rate, os.path.join(td, "c.wav")))
+            pcm = render(text, voice, rate, os.path.join(td, "c.wav"))
+            if style == "jarvis":
+                pcm = style_jarvis(pcm)
+            pcm = trim_and_normalize(pcm)
             clips.append((name, bytes(mulaw(s) for s in pcm)))
             print(f"\r{i + 1}/{len(PHRASES)} {name:<20}", end="", flush=True)
     print()
@@ -138,7 +173,7 @@ def build(voice, rate, out):
         f.write(blob)
     secs = len(data) / RATE
     print(f"wrote {out}: {count} clips, {secs:.1f} s of speech, {len(blob) / 1024:.0f} KB "
-          f"(voice partition holds 4096 KB)")
+          f"(voice partition holds 3072 KB)")
 
 
 def main():
@@ -146,12 +181,22 @@ def main():
     ap.add_argument("--voice", default="Daniel", help="macOS voice (say -v '?' lists them)")
     ap.add_argument("--rate", type=int, default=180, help="words per minute")
     ap.add_argument("--out", default=os.path.join(os.path.dirname(__file__), "..", "build", "voice.bin"))
-    ap.add_argument("--audition", metavar="TEXT", help="just speak TEXT on the Mac with these settings")
+    ap.add_argument("--style", choices=["jarvis", "plain"], default="jarvis",
+                    help="voice processing (default: jarvis)")
+    ap.add_argument("--audition", metavar="TEXT", help="play TEXT on the Mac exactly as the meter would")
     a = ap.parse_args()
     if a.audition:
-        subprocess.run(["say", "-v", a.voice, "-r", str(a.rate), a.audition], check=True)
+        with tempfile.TemporaryDirectory() as td:
+            src, dst = os.path.join(td, "a.wav"), os.path.join(td, "b.wav")
+            pcm = render(a.audition, a.voice, a.rate, src)
+            if a.style == "jarvis":
+                pcm = style_jarvis(pcm)
+            with wave.open(dst, "wb") as w:
+                w.setnchannels(1); w.setsampwidth(2); w.setframerate(RATE)
+                w.writeframes(pcm.tobytes())
+            subprocess.run(["afplay", dst], check=True)
         return
-    build(a.voice, a.rate, a.out)
+    build(a.voice, a.rate, a.out, a.style)
 
 
 if __name__ == "__main__":

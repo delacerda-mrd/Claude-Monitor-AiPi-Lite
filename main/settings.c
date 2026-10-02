@@ -36,6 +36,8 @@ static const settings_t DEFAULTS = {
     .blank_s    = 180,
     .h24        = false,
     .talk       = true,
+    .listen     = true,
+    .listen_batt = false,
     .notify_ip  = "",
 };
 
@@ -107,6 +109,8 @@ void settings_init(void)
         if (nvs_get_u16(h, "blank_s", &b) == ESP_OK) s_cfg.blank_s = b;
         get_bool(h, "h24", &s_cfg.h24);
         get_bool(h, "talk", &s_cfg.talk);
+        get_bool(h, "listen", &s_cfg.listen);
+        get_bool(h, "listen_batt", &s_cfg.listen_batt);
         get_str(h, "notify_ip", s_cfg.notify_ip, sizeof(s_cfg.notify_ip));
 
         size_t len = sizeof(s_token);
@@ -164,6 +168,8 @@ void settings_put(const settings_t *in)
         nvs_set_u16(h, "blank_s", c.blank_s);
         nvs_set_u8(h, "h24", c.h24);
         nvs_set_u8(h, "talk", c.talk);
+        nvs_set_u8(h, "listen", c.listen);
+        nvs_set_u8(h, "listen_batt", c.listen_batt);
         nvs_set_str(h, "notify_ip", c.notify_ip);
         nvs_commit(h);
         nvs_close(h);

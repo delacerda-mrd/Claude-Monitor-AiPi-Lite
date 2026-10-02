@@ -101,7 +101,7 @@ progress{width:100%;accent-color:var(--accent);height:8px;margin-top:10px}
 <section class="card sta-only">
   <h2>Device</h2>
   <dl id="dev"></dl>
-  <div class="row"><button class="ghost" id="pollBtn">Refresh now</button><button class="ghost" id="sayBtn">Say status</button><button class="ghost" id="pageBtn">Next page</button><button class="ghost" id="shotBtn">Screenshot</button></div>
+  <div class="row"><button class="ghost" id="pollBtn">Refresh now</button><button class="ghost" id="sayBtn">Say status</button><button class="ghost" id="lstBtn">Listen now</button><button class="ghost" id="pageBtn">Next page</button><button class="ghost" id="shotBtn">Screenshot</button></div>
 </section>
 
 <section class="card sta-only">
@@ -119,6 +119,8 @@ progress{width:100%;accent-color:var(--accent);height:8px;margin-top:10px}
   </select></label>
   <label>24-hour clock <input type="checkbox" id="h24"></label>
   <label>Talk (spoken announcements) <input type="checkbox" id="talk"></label>
+  <label>“Jarvis” voice control <input type="checkbox" id="listen"></label>
+  <label>Listen on battery too <input type="checkbox" id="listen_batt"></label>
   <label>Volume <input type="range" id="vol" min="40" max="100" step="5"></label>
   <label>Mute <input type="checkbox" id="mute"></label>
   <label>Quiet hours <span><input type="checkbox" id="quiet"> <select id="qf"></select> – <select id="qt"></select></span></label>
@@ -218,11 +220,11 @@ function render(){
   const rows=[['Wi-Fi',d.ssid?`${d.ssid} · ${d.rssi} dBm`:'—'],['IP',d.ip||'—'],
     ['Battery',d.batt<0?'—':`${d.batt}%${d.ext?' · charging':''}`],['Source',u.src],
     ['Token',u.token?'stored':'missing'],['Token host',d.notify],
-    ['Voice',S.voice.clips?`${S.voice.name} · ${S.voice.clips} clips`:'none (tones)'],['Uptime',dur(S.up)],['Heap',`${(d.heap/1024).toFixed(0)} KB free · min ${(d.heap_min/1024).toFixed(0)} KB`],['Firmware',`${S.fw} · ${S.slot} · ${S.ota}`]];
+    ['Jarvis',S.listen?`${S.listen.state}${S.listen.heard?' · last: “'+S.listen.heard+'”':''} · mic ${S.listen.level_db} dB`:'—'],['Voice',S.voice.clips?`${S.voice.name} · ${S.voice.clips} clips`:'none (tones)'],['Uptime',dur(S.up)],['Heap',`${(d.heap/1024).toFixed(0)} KB free · min ${(d.heap_min/1024).toFixed(0)} KB`],['Firmware',`${S.fw} · ${S.slot} · ${S.ota}`]];
   $('dev').innerHTML=rows.map(r=>`<dt>${r[0]}</dt><dd>${r[1]}</dd>`).join('');
   $('fwInfo').textContent=`Running ${S.fw} on ${S.slot}. Uploads go to the other slot and roll back automatically if they fail to come online.`;
   if(!dirty){const s=S.set;$('tz').value=s.tz;if($('tz').value!==s.tz){const o=new Option(s.tz,s.tz);$('tz').add(o);$('tz').value=s.tz}
-    $('h24').checked=s.h24;$('talk').checked=s.talk;$('vol').value=s.vol;$('mute').checked=s.mute;$('quiet').checked=s.quiet;
+    $('h24').checked=s.h24;$('talk').checked=s.talk;$('listen').checked=s.listen;$('listen_batt').checked=s.listen_batt;$('vol').value=s.vol;$('mute').checked=s.mute;$('quiet').checked=s.quiet;
     $('qf').value=s.qf;$('qt').value=s.qt;$('blu').value=s.blu;$('blb').value=s.blb;$('blank').value=s.blank;
     if(!$('ssid').value&&d.ssid)$('ssid').placeholder=d.ssid}
 }
@@ -232,11 +234,11 @@ async function refresh(){try{S=await (await fetch('/api/status',{cache:'no-store
 for(const id of ['qf','qt'])for(let h=0;h<24;h++)$(id).add(new Option(String(h).padStart(2,'0')+':00',h));
 let saveT;
 function saveSettings(extra={}){dirty=true;clearTimeout(saveT);saveT=setTimeout(async()=>{
-  const b={tz:$('tz').value,h24:$('h24').checked,talk:$('talk').checked,vol:+$('vol').value,mute:$('mute').checked,quiet:$('quiet').checked,
+  const b={tz:$('tz').value,h24:$('h24').checked,talk:$('talk').checked,listen:$('listen').checked,listen_batt:$('listen_batt').checked,vol:+$('vol').value,mute:$('mute').checked,quiet:$('quiet').checked,
     qf:+$('qf').value,qt:+$('qt').value,blu:+$('blu').value,blb:+$('blb').value,blank:+$('blank').value,...extra};
   try{await api('/api/settings',{method:'POST',body:JSON.stringify(b)});toast('Saved')}catch(e){toast('Save failed: '+e.message)}
   dirty=false},350)}
-for(const id of ['tz','h24','talk','mute','quiet','qf','qt','blu','blb','blank'])$(id).addEventListener('change',()=>saveSettings());
+for(const id of ['tz','h24','talk','listen','listen_batt','mute','quiet','qf','qt','blu','blb','blank'])$(id).addEventListener('change',()=>saveSettings());
 $('vol').addEventListener('change',()=>saveSettings({test:true}));
 
 $('tokBtn').onclick=async()=>{const t=$('tok').value.trim();if(t.length<20)return toast('That token looks too short');
@@ -246,6 +248,7 @@ $('wifiBtn').onclick=async()=>{const ss=$('ssid').value.trim();if(!ss)return toa
   try{await api('/api/wifi',{method:'POST',body:JSON.stringify({ssid:ss,pass:$('wpass').value})});toast('Saved — restarting')}catch(e){toast('Failed: '+e.message)}};
 $('pollBtn').onclick=async()=>{try{await api('/api/poll',{method:'POST'});toast('Polling…');setTimeout(refresh,3000)}catch(e){toast(e.message)}};
 $('sayBtn').onclick=async()=>{try{await api('/api/say',{method:'POST',body:'{"status":true}'})}catch(e){toast(e.message)}};
+$('lstBtn').onclick=async()=>{try{await api('/api/say',{method:'POST',body:'{"listen":true}'});toast('Listening — say a command')}catch(e){toast(e.message)}};
 $('pageBtn').onclick=async()=>{try{await api('/api/button',{method:'POST',body:'{}'})}catch(e){toast(e.message)}};
 $('shotBtn').onclick=()=>window.open('/api/screen.bmp?'+Date.now(),'_blank');
 $('fwBtn').onclick=()=>{const f=$('fw').files[0];if(!f)return toast('Choose a .bin first');

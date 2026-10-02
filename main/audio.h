@@ -70,6 +70,13 @@ void audio_stream_begin(void);
 void audio_stream_write(const int16_t *stereo, size_t frames);
 void audio_stream_end(void);
 
+/* Microphone (ES8311 ADC on I2S DIN, 16 kHz). Enabling keeps MCLK and the
+ * ADC running between sounds. audio_mic_read() blocks up to 200 ms and
+ * returns mono frames read (<= 512). */
+void audio_mic_enable(bool on);
+int  audio_mic_read(int16_t *mono, int frames);
+bool audio_is_playing(void);
+
 /**
  * Cycle to the next volume preset (65 → 70 → 80 → 65 …).
  * Applies the change immediately and plays a short feedback tone

@@ -24,6 +24,7 @@
 #include "app.h"
 #include "board.h"
 #include "clawd.h"
+#include "listen.h"
 #include "net.h"
 #include "power.h"
 #include "settings.h"
@@ -240,6 +241,64 @@ static void sb_layout(void)
         x -= 3;
     }
 }
+
+/* ------------------------------------------------------------------ */
+/* Listening banner (top layer)                                        */
+/* ------------------------------------------------------------------ */
+static struct { lv_obj_t *box, *dot, *lbl; int shown; } s_lb;
+
+static void dot_anim_cb(void *o, int32_t v) { lv_obj_set_style_bg_opa(o, (lv_opa_t)v, 0); }
+
+static void lb_build(void)
+{
+    s_lb.box = mk_box(lv_layer_top(), 10, LCD_H - 24, LCD_W - 20, 20, C_CARD, 10);
+    lv_obj_set_style_border_width(s_lb.box, 1, 0);
+    lv_obj_set_style_border_color(s_lb.box, HEX(C_ACCENT), 0);
+    s_lb.dot = mk_box(s_lb.box, 8, 7, 6, 6, C_ACCENT, LV_RADIUS_CIRCLE);
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, s_lb.dot);
+    lv_anim_set_values(&a, LV_OPA_20, LV_OPA_COVER);
+    lv_anim_set_time(&a, 500);
+    lv_anim_set_playback_time(&a, 500);
+    lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
+    lv_anim_set_exec_cb(&a, dot_anim_cb);
+    lv_anim_start(&a);
+    s_lb.lbl = mk_label(s_lb.box, F_MONO, C_TEXT, "");
+    lv_label_set_long_mode(s_lb.lbl, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(s_lb.lbl, LCD_W - 20 - 24);
+    lv_obj_set_pos(s_lb.lbl, 19, 3);
+    lv_obj_add_flag(s_lb.box, LV_OBJ_FLAG_HIDDEN);
+    s_lb.shown = -1;
+}
+
+/* 0 hidden, 1 listening, 2 showing what was heard (2.5 s) */
+static void lb_update(void)
+{
+    if (!s_lb.box) return;
+    listen_state_t st = listen_state();
+    int64_t heard = listen_heard_us();
+    int want = (st == LISTEN_PROMPT || st == LISTEN_COMMAND) ? 1
+             : (heard && esp_timer_get_time() - heard < 2500000) ? 2 : 0;
+    if (want == s_lb.shown) return;
+    s_lb.shown = want;
+    if (!want) { lv_obj_add_flag(s_lb.box, LV_OBJ_FLAG_HIDDEN); return; }
+    lv_obj_clear_flag(s_lb.box, LV_OBJ_FLAG_HIDDEN);
+    if (want == 1) {
+        set_text(s_lb.lbl, "Listening...");
+        lv_obj_clear_flag(s_lb.dot, LV_OBJ_FLAG_HIDDEN);
+        set_color(s_lb.lbl, HEX(C_TEXT));
+    } else {
+        char b[56];
+        snprintf(b, sizeof(b), "\"%s\"", listen_heard());
+        set_text(s_lb.lbl, b);
+        lv_obj_add_flag(s_lb.dot, LV_OBJ_FLAG_HIDDEN);
+        set_color(s_lb.lbl, HEX(C_ACCENT));
+    }
+}
+
+static volatile ui_req_t s_req;
+void ui_request(ui_req_t r) { s_req = r; }
 
 static void sb_set_page(page_t p)
 {
@@ -870,6 +929,7 @@ static void pages_build(void)
     clawd_page_build(s_scr[PAGE_CLAWD]);
     system_build(s_scr[PAGE_SYSTEM]);
     sb_build();
+    lb_build();
 }
 
 static void go_page(page_t p, lv_scr_load_anim_t anim)
@@ -953,6 +1013,22 @@ void ui_tick(void)
         return;
     }
     if (s_mode != MODE_PAGES) return;
+
+    lb_update();
+    ui_req_t req = s_req;
+    if (req != UI_REQ_NONE) {
+        s_req = UI_REQ_NONE;
+        if (req >= UI_REQ_PAGE_RINGS && req <= UI_REQ_PAGE_SYSTEM) {
+            page_t p = (page_t)(req - UI_REQ_PAGE_RINGS);
+            if (p != s_page) go_page(p, p > s_page ? LV_SCR_LOAD_ANIM_MOVE_LEFT : LV_SCR_LOAD_ANIM_MOVE_RIGHT);
+        } else if (req == UI_REQ_NEXT) {
+            ui_button_short();
+        } else if (req == UI_REQ_PREV) {
+            ui_button_prev();
+        } else if (req == UI_REQ_SCREEN_OFF) {
+            screen_sleep();
+        }
+    }
 
     usage_t u;
     usage_get(&u);

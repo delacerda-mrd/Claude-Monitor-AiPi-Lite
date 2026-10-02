@@ -115,6 +115,11 @@ Verified via serial log, `/api/status` and `/api/screen.bmp` (exact panel input)
 - [x] GPIO21 = charger CHRG (0 after replug, back to 1 on the full cell); status bar plug/bolt
 - [~] Left-button hold 3 s on battery → power off, and left button powers back on
 - [~] Battery mode now actually engages on unplug (15 % backlight, 300 s polls)
+### Voice control (v2.2)
+- [x] Models load from `model` partition; AFE + MultiNet up; fetch/mn chunks 512
+- [x] Mic streams (after keeping TX on); quiet room ≈ −45 dBFS
+- [x] "Jarvis" wake word: 12/12 wakes in user test, "Yes?" + banner + cyan LED
+- [~] Command recognition reliable — currently ~4/9; tuning pending (see JOURNAL)
 ### Voice (v2.1)
 - [x] USB flash with the new partition table; token + Wi-Fi survived (NVS offset unchanged)
 - [x] `POST /voice` installs the Daniel pack (2.4 MB in 15 s): `voice pack "Daniel": 127 clips`

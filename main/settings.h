@@ -22,6 +22,8 @@ typedef struct {
     uint16_t blank_s;       /* screen blank after idle seconds, 0 = never    */
     bool     h24;           /* 24-hour clock                                 */
     bool     talk;          /* spoken announcements (else tones)             */
+    bool     listen;        /* "Jarvis" wake word + voice commands           */
+    bool     listen_batt;   /* ...also on battery (costs battery)            */
     char     notify_ip[16]; /* host that last pushed a token (online-notify) */
 } settings_t;
 

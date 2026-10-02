@@ -45,6 +45,7 @@
 #include "net.h"
 #include "secrets_compat.h"
 #include "settings.h"
+#include "listen.h"
 #include "ui.h"
 #include "usage.h"
 #include "voice.h"
@@ -291,10 +292,36 @@ static esp_err_t status_get(httpd_req_t *req)
     cJSON_AddNumberToObject(st, "blank", c.blank_s);
     cJSON_AddBoolToObject(st, "h24", c.h24);
     cJSON_AddBoolToObject(st, "talk", c.talk);
+    cJSON_AddBoolToObject(st, "listen", c.listen);
+    cJSON_AddBoolToObject(st, "listen_batt", c.listen_batt);
+    static const char *LS[] = { "off", "idle", "prompt", "command" };
+    cJSON *li = cJSON_AddObjectToObject(r, "listen");
+    cJSON_AddStringToObject(li, "state", LS[listen_state()]);
+    cJSON_AddStringToObject(li, "heard", listen_heard());
+    cJSON_AddNumberToObject(li, "level_db", (int)listen_level_db());
     cJSON *vo = cJSON_AddObjectToObject(r, "voice");
     cJSON_AddStringToObject(vo, "name", voice_name());
     cJSON_AddNumberToObject(vo, "clips", voice_clip_count());
     return send_json(req, r);
+}
+
+/* The raw mic audio of the last voice-command attempt, as a WAV. */
+static esp_err_t rec_get(httpd_req_t *req)
+{
+    int n = 0;
+    const int16_t *pcm = listen_last_take(&n);
+    if (!pcm || n <= 0) { httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "no recording yet"); return ESP_FAIL; }
+    uint32_t data = n * 2, riff = 36 + data, rate = 16000, brate = 32000;
+    uint8_t h[44] = {'R','I','F','F',0,0,0,0,'W','A','V','E','f','m','t',' ',16,0,0,0,1,0,1,0,
+                     0,0,0,0,0,0,0,0,2,0,16,0,'d','a','t','a',0,0,0,0};
+    memcpy(h + 4, &riff, 4); memcpy(h + 24, &rate, 4); memcpy(h + 28, &brate, 4); memcpy(h + 40, &data, 4);
+    httpd_resp_set_type(req, "audio/wav");
+    httpd_resp_send_chunk(req, (const char *)h, sizeof(h));
+    for (int off = 0; off < n; off += 2048) {
+        int k = n - off < 2048 ? n - off : 2048;
+        if (httpd_resp_send_chunk(req, (const char *)(pcm + off), k * 2) != ESP_OK) break;
+    }
+    return httpd_resp_send_chunk(req, NULL, 0);
 }
 
 /* Screenshot: exactly what was sent to the panel, upscaled 3x. */
@@ -410,6 +437,8 @@ static esp_err_t settings_post(httpd_req_t *req)
     if (cJSON_IsNumber(v = cJSON_GetObjectItem(j, "blank"))) c.blank_s    = (uint16_t)v->valueint;
     if (cJSON_IsBool(v = cJSON_GetObjectItem(j, "h24")))     c.h24        = cJSON_IsTrue(v);
     if (cJSON_IsBool(v = cJSON_GetObjectItem(j, "talk")))    c.talk       = cJSON_IsTrue(v);
+    if (cJSON_IsBool(v = cJSON_GetObjectItem(j, "listen")))  c.listen     = cJSON_IsTrue(v);
+    if (cJSON_IsBool(v = cJSON_GetObjectItem(j, "listen_batt"))) c.listen_batt = cJSON_IsTrue(v);
     bool test = cJSON_IsTrue(cJSON_GetObjectItem(j, "test"));
     cJSON_Delete(j);
     settings_put(&c);
@@ -460,6 +489,7 @@ static esp_err_t say_post(httpd_req_t *req)
     cJSON *sc = j ? cJSON_GetObjectItem(j, "script") : NULL;
     bool ok = true;
     if (cJSON_IsTrue(cJSON_GetObjectItem(j, "tone"))) audio_play_async(MELODY_BOOT);  /* diagnostics */
+    else if (cJSON_IsTrue(cJSON_GetObjectItem(j, "listen"))) listen_wake_now();      /* skip the wake word */
     else if (cJSON_IsString(sc)) ok = audio_say_async(sc->valuestring);
     else usage_say_status();
     cJSON_Delete(j);
@@ -585,6 +615,7 @@ void web_start(void)
         { "/",             HTTP_GET,  page_get,      NULL },
         { "/api/status",   HTTP_GET,  status_get,    NULL },
         { "/api/screen.bmp", HTTP_GET, screen_get,   NULL },
+        { "/api/rec.wav",  HTTP_GET,  rec_get,       NULL },
         { "/",             HTTP_POST, token_post,    NULL },
         { "/api/settings", HTTP_POST, settings_post, NULL },
         { "/api/wifi",     HTTP_POST, wifi_post,     NULL },
