@@ -23,3 +23,16 @@
 
 #define LCD_W           128
 #define LCD_H           128
+
+/* Audio (meter_core audio.c): ES8311 on I2C1, I2S0, NS4150-style amp.
+ * From xiaozhi-esp32 boards/aipi-lite/config.h; verified in use since v1. */
+#define BOARD_AUDIO_I2C_PORT     I2C_NUM_1
+#define BOARD_AUDIO_I2C_SDA      GPIO_NUM_5
+#define BOARD_AUDIO_I2C_SCL      GPIO_NUM_4
+#define BOARD_AUDIO_I2S_MCLK     GPIO_NUM_6
+#define BOARD_AUDIO_I2S_BCLK     GPIO_NUM_14
+#define BOARD_AUDIO_I2S_WS       GPIO_NUM_12
+#define BOARD_AUDIO_I2S_DOUT     GPIO_NUM_11
+#define BOARD_AUDIO_I2S_DIN      GPIO_NUM_13
+#define BOARD_AUDIO_PA_PIN       GPIO_NUM_9
+#define BOARD_AUDIO_PA_ON_LEVEL  1          /* amp enable is active-high */

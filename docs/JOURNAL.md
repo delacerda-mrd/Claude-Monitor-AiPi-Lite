@@ -15,6 +15,8 @@ persona, meter state, 10-min memory) → reply in the meter's voice + optional a
 Mac side verified with a simulated request (6.4 s round trip); **the meter → Mac path
 is not yet verified by voice** — user to say "Jarvis, <question>". v2.4 personality +
 lighter pitch deployed; v2.3 voice smoothing verified by ear.
+**Layout change (2026-10-03):** shared code + host tools now live in `../meter_core`
+(must sit next to this repo); this repo is the AiPi-Lite board half.
 
 **Resume here (voice tuning):** wake word ≈ 100 % (12/12). Commands hit ~4 of 9
 (p 0.14–0.23); misses log `no command (speech heard … peak −10 dBFS, best guess "")`.
@@ -57,6 +59,19 @@ min ~91–100 KB (59 KB under a screenshot burst). Details: BRINGUP Phase 7.
 ---
 
 ## Session Log (newest first)
+
+### 2026-10-03 (Mac, morning) — shared code split out to ../meter_core
+User wants the ES3C28P port as its own fresh project, with a shared core. Moved the
+board-independent firmware (`audio voice listen brain usage settings net web app.h
+secrets_compat.h` + dashboard) and all host tooling (`brain_server.py`,
+`push_claude_token.py`, `notify_listener.py`, `host/`, `tools/make_voice.py`) to the new
+sibling repo `meter_core` (from commit 0703348). This repo now compiles the core into
+`main` via `meter_core/firmware/meter_core.cmake`; audio pins moved to `board.h`
+(`BOARD_AUDIO_*`), board pin probes to `web_board_status()` in main.c. Brain server now
+allows several meters (`METER_HOSTS`, resolved off the request path). launchd agents
+reinstalled from meter_core. Verified: build size unchanged (+80 B), OTA → valid, polling
+OK, 435-clip pack, Jarvis idle, brain round trip from the new path. Note: internal RAM
+free read 21.5 KB this boot (was 25–29 KB) — same code; watch it.
 
 ### 2026-10-03 (Mac, ~01:30) — v2.5: brain on the Mac
 User: "let's implement the brain on the mac". Design: offline MultiNet first (instant);

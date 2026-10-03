@@ -23,6 +23,14 @@ A tap cycles the pages; holding the button (≥ 0.6 s) refreshes and reads the r
 The top bar always shows the clock, page dots, a sync spinner, Wi-Fi, charging and
 battery. The screen blanks after 3 min idle (configurable); the first press wakes it.
 
+## Two halves: this repo + meter_core
+
+This repo is the **AiPi-Lite board**: screen, buttons, LED, power. Everything shared
+with the other Claude Meters — audio, voice, "Jarvis", the Mac brain, usage polling,
+settings, Wi-Fi, the web dashboard, and all the Mac-side tools — lives in
+[`meter_core`](../meter_core), which must be checked out next to this repo
+(`~/Claude_Code/meter_core`) or pointed to with `$METER_CORE`.
+
 ## How it gets the numbers
 
 The device holds a Claude Code OAuth token and polls
@@ -67,9 +75,9 @@ setup page automatically; enter your Wi-Fi and the meter restarts and joins it.
 ## Token pipeline on the Mac
 
 ```bash
-host/macos/install.sh            # install + start the three launchd agents
-host/macos/install.sh status     # state + recent log lines
-host/macos/install.sh uninstall
+../meter_core/host/macos/install.sh            # install + start the three launchd agents
+../meter_core/host/macos/install.sh status     # state + recent log lines
+../meter_core/host/macos/install.sh uninstall
 ```
 
 - `com.claude-meter.token-push` runs `push_claude_token.py` at login and every 4 h.
@@ -87,8 +95,8 @@ Two one-time macOS grants:
    choose *Always Allow*.
 
 Logs: `~/Library/Logs/com.claude-meter.*.log`. Manual push:
-`python3 push_claude_token.py [--ip 192.168.x.y] [--secret S] [--margin H]`.
-`host/macos/Copy Claude Token.command` copies a fresh token to the clipboard for
+`python3 ../meter_core/host/push_claude_token.py [--ip 192.168.x.y] [--secret S] [--margin H]`.
+`../meter_core/host/macos/Copy Claude Token.command` copies a fresh token to the clipboard for
 pasting into the dashboard by hand.
 
 Exit codes: `0` ok · `1` credentials error · `2` token not fresh (not pushed) · `3` push failed.
@@ -100,7 +108,7 @@ The systemd units are in `host/linux/`. Credentials come from
 
 ```bash
 mkdir -p ~/scripts ~/.config/systemd/user
-cp push_claude_token.py notify_listener.py ~/scripts/
+cp ../meter_core/host/push_claude_token.py ../meter_core/host/notify_listener.py ~/scripts/
 cp host/linux/*.service host/linux/*.timer ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now claude-token-push.timer claude-notify-listener.service
@@ -143,9 +151,9 @@ The voice is a clip pack recorded on your Mac with `say`, stored in its own flas
 partition, swappable over Wi-Fi:
 
 ```bash
-tools/make_voice.py --audition "session_at #42 percent . resets_in ~9780"   # hear a sentence as the meter joins it
-tools/make_voice.py --say "Good evening."                                    # any text through the voice chain
-tools/make_voice.py --voice Daniel                                           # build build/voice.bin (needs numpy, ~3 min)
+../meter_core/tools/make_voice.py --audition "session_at #42 percent . resets_in ~9780"   # hear a sentence as the meter joins it
+../meter_core/tools/make_voice.py --say "Good evening."                                    # any text through the voice chain
+../meter_core/tools/make_voice.py --voice Daniel                                           # build build/voice.bin (needs numpy, ~3 min)
 curl --data-binary @build/voice.bin http://claude-meter.local/voice            # install (it says hi)
 ```
 
@@ -168,8 +176,8 @@ Claude can also drive the meter ("show me the pace page", "mute yourself").
 
 ```bash
 brew install whisper-cpp           # once; install.sh fetches the ~470 MB model
-host/macos/install.sh              # starts the brain agent with the others
-/usr/bin/python3 brain_server.py --test "what's the capital of Peru"   # try it on the Mac
+../meter_core/host/macos/install.sh              # starts the brain agent with the others
+/usr/bin/python3 ../meter_core/host/brain_server.py --test "what's the capital of Peru"   # try it on the Mac
 tail -f ~/Library/Logs/com.claude-meter.brain.log                     # what it heard/said
 ```
 

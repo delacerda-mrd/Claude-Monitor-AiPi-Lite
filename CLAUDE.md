@@ -28,17 +28,20 @@ Toolchain: **ESP-IDF v5.4.4** + `esp_lcd_st7735` 0.0.1 + LVGL 8.4.0 (pinned by t
 committed `dependencies.lock`).
 
 ## Layout
-- `main/` — modules: `main.c` (boot, LVGL driver, main loop, button), `ui.c` + `clawd.c`
-  (all LVGL), `usage.c` (poll task), `net.c`, `web.c` + `web/index.html`, `power.c`,
-  `led.c`, `settings.c`, `audio.c`, `voice.c`, `listen.c` + `brain.c` (voice), `fonts/`. Map + threading: `docs/ARCHITECTURE.md`.
+- `main/` — the **board** half: `main.c` (boot, LVGL driver, main loop, buttons, app_say
+  policy), `ui.c` + `clawd.c` (all LVGL), `power.c`, `led.c`, `board.h` (pins incl.
+  audio), `fonts/`. Map + threading: `docs/ARCHITECTURE.md`.
+- **`../meter_core`** (sibling repo, since 2026-10-03) — the **shared** half, compiled
+  into `main`: `audio`, `voice`, `listen`, `brain`, `usage`, `settings`, `net`, `web` +
+  dashboard, `app.h`; plus all host tooling (`host/`: token push, notify listener,
+  brain server, launchd install) and `tools/make_voice.py`. Its README has the board
+  contract. A core change affects every meter: build each board project before committing.
 - `main/secrets.h` — OPTIONAL seed for Wi-Fi/token/`CFG_AUTH_SECRET` (NOT committed).
 - `partitions.csv` / `sdkconfig.defaults` — two-OTA 16 MB layout + voice/model partitions, 8 MB PSRAM
   (`sdkconfig` is generated, not committed).
-- `push_claude_token.py` / `notify_listener.py` / `brain_server.py` (Mac brain, :5556) + `host/macos/` (launchd) /
-  `host/linux/` (systemd) — host-side token tooling (see `README.md`).
 - `tools/` — `idf.sh` (IDF wrapper), `shot.sh` (screenshot), `serial_log.py`,
-  `gen_clawd.py` (regenerates `main/clawd_anims.h`), `make_voice.py` (speech pack →
-  `curl --data-binary @build/voice.bin http://claude-meter.local/voice`).
+  `gen_clawd.py` (regenerates `main/clawd_anims.h`). The voice pack is built in
+  meter_core (`tools/make_voice.py` → `curl --data-binary @build/voice.bin http://claude-meter.local/voice`).
 
 ## Build / flash / debug (Mac)
 ```bash
@@ -58,7 +61,7 @@ tools/shot.sh                               # PNG of what the screen shows now
 Wi-Fi config and the token live in NVS (Wi-Fi in the driver's `nvs.net80211`, token in
 `cfg`/`token`); `secrets.h` only seeds an empty device. The token is Claude Code's
 OAuth bearer — on the Mac in the Keychain item "Claude Code-credentials" — pushed by
-the launchd agents (`host/macos/install.sh`). Don't read it yourself; the agents do.
+the launchd agents (`../meter_core/host/macos/install.sh`). Don't read it yourself; the agents do.
 
 ## Hard rules for this project
 - Never guess pin numbers or I2C addresses — `docs/BOARD_REFERENCE.md` or measurement only.

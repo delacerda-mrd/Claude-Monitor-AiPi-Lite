@@ -28,6 +28,7 @@
 #include "esp_lcd_panel_vendor.h"
 #include "esp_lcd_st7735.h"
 #include "lvgl.h"
+#include "cJSON.h"
 
 #include "app.h"
 #include "audio.h"
@@ -41,6 +42,7 @@
 #include "ui.h"
 #include "usage.h"
 #include "voice.h"
+#include "web.h"
 
 static const char *TAG = "main";
 
@@ -421,4 +423,13 @@ void app_main(void)
 
         vTaskDelay(pdMS_TO_TICKS(10));
     }
+}
+
+/* GET /api/status "hw": the AiPi-Lite's pin probes (meter_core web.c). */
+void web_board_status(cJSON *hw)
+{
+    cJSON_AddNumberToObject(hw, "gpio1", gpio_get_level(PIN_BTN_PWR));
+    cJSON_AddNumberToObject(hw, "gpio8", gpio_get_level(PIN_VBUS));
+    cJSON_AddNumberToObject(hw, "gpio21", gpio_get_level(PIN_CHRG));
+    cJSON_AddNumberToObject(hw, "gpio42", gpio_get_level(PIN_BTN));
 }
