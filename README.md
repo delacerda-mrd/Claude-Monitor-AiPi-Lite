@@ -67,13 +67,14 @@ setup page automatically; enter your Wi-Fi and the meter restarts and joins it.
 ## Token pipeline on the Mac
 
 ```bash
-host/macos/install.sh            # install + start the two launchd agents
+host/macos/install.sh            # install + start the three launchd agents
 host/macos/install.sh status     # state + recent log lines
 host/macos/install.sh uninstall
 ```
 
 - `com.claude-meter.token-push` runs `push_claude_token.py` at login and every 4 h.
 - `com.claude-meter.notify-listener` keeps `notify_listener.py` on port 5555.
+- `com.claude-meter.brain` keeps `brain_server.py` on port 5556 (see *Ask it anything*).
 
 On macOS the script reads Claude Code's credentials from the Keychain item
 **"Claude Code-credentials"**; if fewer than 6 h remain it back-dates the expiry and
@@ -142,14 +143,39 @@ The voice is a clip pack recorded on your Mac with `say`, stored in its own flas
 partition, swappable over Wi-Fi:
 
 ```bash
-tools/make_voice.py --audition "Session at forty two percent." --voice Daniel   # hear it on the Mac
-tools/make_voice.py --voice Daniel                                             # build build/voice.bin
+tools/make_voice.py --audition "session_at #42 percent . resets_in ~9780"   # hear a sentence as the meter joins it
+tools/make_voice.py --say "Good evening."                                    # any text through the voice chain
+tools/make_voice.py --voice Daniel                                           # build build/voice.bin (needs numpy, ~3 min)
 curl --data-binary @build/voice.bin http://claude-meter.local/voice            # install (it says hi)
 ```
 
-`say -v '?'` lists voices (Daniel, Samantha, Karen, Moira… or the robots: Zarvox,
+It has a personality: most lines come in several variants, picked at random without
+repeats, and now and then (at most every 45–105 min, only while you're working) it
+offers an unsolicited remark. Untick **Wit** in the dashboard to stop those.
+`--pitch` (default 1.04: a touch lighter and quicker) and `--style plain` change the
+character. `say -v '?'` lists voices (Daniel, Samantha, Karen, Moira… or the robots: Zarvox,
 Trinoids, Ralph). Turn *Talk* off in the dashboard to get the old tones back; mute
 and quiet hours silence both.
+
+## Ask it anything (brain on the Mac)
+
+Say **"Jarvis"**, then anything. The offline command set answers what it knows
+instantly; everything else goes to `brain_server.py` on the Mac that pushes the
+token: whisper.cpp transcribes it, `claude -p` (your subscription, no tools, a
+JARVIS persona that knows the meter's live numbers and remembers the last 10 min)
+answers, and the reply comes back in the meter's own voice — about 5–7 s end to end.
+Claude can also drive the meter ("show me the pace page", "mute yourself").
+
+```bash
+brew install whisper-cpp           # once; install.sh fetches the ~470 MB model
+host/macos/install.sh              # starts the brain agent with the others
+/usr/bin/python3 brain_server.py --test "what's the capital of Peru"   # try it on the Mac
+tail -f ~/Library/Logs/com.claude-meter.brain.log                     # what it heard/said
+```
+
+`BRAIN_MODEL` (default `sonnet`) picks the Claude model. Only the meter
+(`claude-meter.local`) may ask. Untick *Brain on the Mac* in the dashboard to keep
+everything offline.
 
 ## Lights
 

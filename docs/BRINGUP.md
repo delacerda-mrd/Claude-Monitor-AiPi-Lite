@@ -120,10 +120,18 @@ Verified via serial log, `/api/status` and `/api/screen.bmp` (exact panel input)
 - [x] Mic streams (after keeping TX on); quiet room ≈ −45 dBFS
 - [x] "Jarvis" wake word: 12/12 wakes in user test, "Yes?" + banner + cyan LED
 - [~] Command recognition reliable — currently ~4/9; tuning pending (see JOURNAL)
+### v2.3–v2.5 (2026-10-03)
+- [x] Rings r50/r42: corner labels clear the outer ring (screenshot)
+- [x] Voice pack v2 (IMA-ADPCM) plays; C decoder bit-exact vs Python; smoother joins by ear
+- [x] USB flash with voice 5.9 MB / model @0xC00000; old pack + models survived; 435-clip pack installed
+- [~] Quips vary without repeats; Wit remarks fire while working (by ear, over a day)
+- [~] "Jarvis" on battery (listen_batt default on) — user to try unplugged
+- [x] Brain: meter → Mac → spoken answer, from real voice questions (brain log 01:49–01:51)
+- [~] Brain actions (page/mute/volume) from voice — verified Mac-side only
 ### Voice (v2.1)
 - [x] USB flash with the new partition table; token + Wi-Fi survived (NVS offset unchanged)
 - [x] `POST /voice` installs the Daniel pack (2.4 MB in 15 s): `voice pack "Daniel": 127 clips`
 - [x] `POST /api/say` status runs with no audio errors in the log
-- [~] **Speech is audible and clean** (no buzz at the end, sensible volume) — confirm by ear
+- [x] **Speech is audible and clean** — v2.3 smoothing confirmed by ear 2026-10-03 ("sounds much better")
 - [~] Hold-to-refresh announces; event phrases (threshold, token, reset) fire
 - [~] On battery: 15 % backlight, 300 s polls, battery icon level

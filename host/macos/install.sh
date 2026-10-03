@@ -9,6 +9,10 @@
 #   com.claude-meter.token-push       push_claude_token.py every 4 h + at login
 #   com.claude-meter.notify-listener  notify_listener.py on :5555, kept alive;
 #                                     the meter pings it when it needs a token
+#   com.claude-meter.brain            brain_server.py on :5556, kept alive: what
+#                                     "Jarvis" can't answer offline (whisper +
+#                                     claude -p). Needs: brew install whisper-cpp
+#                                     + the model (fetched below if missing)
 #
 # The Mac counterpart of host/linux/*.service|timer.
 set -e
@@ -19,6 +23,8 @@ PY=/usr/bin/python3                # stable path: survives Homebrew upgrades
 CLAUDE_BIN="$HOME/.local/bin/claude"
 PUSH=com.claude-meter.token-push
 LISTEN=com.claude-meter.notify-listener
+BRAIN=com.claude-meter.brain
+WHISPER_MODEL="$HOME/.cache/claude-meter/ggml-small.en.bin"
 UID_=$(id -u)
 
 plist() {   # label, script, extra-xml
@@ -57,19 +63,28 @@ install)
   plist $LISTEN notify_listener.py \
     "    <key>KeepAlive</key><true/>
     <key>ThrottleInterval</key><integer>10</integer>" > "$AGENTS/$LISTEN.plist"
-  for a in $LISTEN $PUSH; do
+  plist $BRAIN brain_server.py \
+    "    <key>KeepAlive</key><true/>
+    <key>ThrottleInterval</key><integer>10</integer>" > "$AGENTS/$BRAIN.plist"
+  command -v whisper-cli >/dev/null || [[ -x /opt/homebrew/bin/whisper-cli ]] || echo "warning: whisper-cli missing — brew install whisper-cpp"
+  if [[ ! -f "$WHISPER_MODEL" ]]; then
+    echo "fetching the whisper model (~470 MB)..."
+    mkdir -p "${WHISPER_MODEL:h}"
+    curl -sL -o "$WHISPER_MODEL" https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin
+  fi
+  for a in $LISTEN $PUSH $BRAIN; do
     unload $a
     launchctl bootstrap "gui/$UID_" "$AGENTS/$a.plist"
     echo "loaded $a"
   done
-  echo "logs: $LOGS/$PUSH.log, $LOGS/$LISTEN.log"
+  echo "logs: $LOGS/$PUSH.log, $LOGS/$LISTEN.log, $LOGS/$BRAIN.log"
   echo "First run: if macOS asks whether 'security' may read \"Claude Code-credentials\", choose Always Allow."
   ;;
 uninstall)
-  for a in $PUSH $LISTEN; do unload $a; rm -f "$AGENTS/$a.plist"; echo "removed $a"; done
+  for a in $PUSH $LISTEN $BRAIN; do unload $a; rm -f "$AGENTS/$a.plist"; echo "removed $a"; done
   ;;
 status)
-  for a in $LISTEN $PUSH; do
+  for a in $LISTEN $PUSH $BRAIN; do
     echo "== $a"; launchctl print "gui/$UID_/$a" 2>/dev/null | grep -E "state =|last exit code|runs =" || echo "not loaded"
     tail -n 5 "$LOGS/$a.log" 2>/dev/null
   done

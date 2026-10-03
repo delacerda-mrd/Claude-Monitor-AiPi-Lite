@@ -283,7 +283,7 @@ static void net_task(void *arg)
     mdns_setup();
     web_start();
     g_sys.boot = BOOT_FETCH;
-    app_say("online", MELODY_BOOT);
+    app_say("@online/online", MELODY_BOOT);
     usage_start();
     vTaskDelete(NULL);
 }

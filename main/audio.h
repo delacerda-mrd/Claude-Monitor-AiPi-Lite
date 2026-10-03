@@ -63,6 +63,9 @@ void audio_set_volume(int vol);
  * Returns false if no voice pack is installed (caller should play a tone).
  */
 bool audio_say_async(const char *script);
+/* Play 16 kHz mono PCM (a heap_caps_malloc buffer; the audio task frees it).
+ * false = not queued, the caller still owns it. */
+bool audio_play_pcm_async(int16_t *pcm, size_t samples);
 
 /* Streaming playback, for voice.c -- call only from the audio task, between
  * audio_stream_begin() and audio_stream_end(). Frames are 16-bit stereo. */

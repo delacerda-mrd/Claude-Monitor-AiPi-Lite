@@ -30,11 +30,11 @@ committed `dependencies.lock`).
 ## Layout
 - `main/` — modules: `main.c` (boot, LVGL driver, main loop, button), `ui.c` + `clawd.c`
   (all LVGL), `usage.c` (poll task), `net.c`, `web.c` + `web/index.html`, `power.c`,
-  `led.c`, `settings.c`, `audio.c`, `fonts/`. Map + threading: `docs/ARCHITECTURE.md`.
+  `led.c`, `settings.c`, `audio.c`, `voice.c`, `listen.c` + `brain.c` (voice), `fonts/`. Map + threading: `docs/ARCHITECTURE.md`.
 - `main/secrets.h` — OPTIONAL seed for Wi-Fi/token/`CFG_AUTH_SECRET` (NOT committed).
-- `partitions.csv` / `sdkconfig.defaults` — two-OTA 16 MB layout, no PSRAM
+- `partitions.csv` / `sdkconfig.defaults` — two-OTA 16 MB layout + voice/model partitions, 8 MB PSRAM
   (`sdkconfig` is generated, not committed).
-- `push_claude_token.py` / `notify_listener.py` + `host/macos/` (launchd) /
+- `push_claude_token.py` / `notify_listener.py` / `brain_server.py` (Mac brain, :5556) + `host/macos/` (launchd) /
   `host/linux/` (systemd) — host-side token tooling (see `README.md`).
 - `tools/` — `idf.sh` (IDF wrapper), `shot.sh` (screenshot), `serial_log.py`,
   `gen_clawd.py` (regenerates `main/clawd_anims.h`), `make_voice.py` (speech pack →

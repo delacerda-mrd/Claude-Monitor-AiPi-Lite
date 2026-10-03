@@ -22,6 +22,7 @@
 #include "freertos/semphr.h"
 #include "esp_attr.h"
 #include "esp_log.h"
+#include "esp_random.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
 #include "esp_http_client.h"
@@ -348,8 +349,8 @@ static const char *window_at(const usage_t *u) { return u->session_pct >= u->wee
 
 static void say_status_of(const usage_t *u)
 {
-    if (!u->ok && u->err == POLL_AUTH) { app_say_now("token_bad", MELODY_ERROR); return; }
-    if (!u->ok && u->err == POLL_NET)  { app_say_now("offline", MELODY_ERROR); return; }
+    if (!u->ok && u->err == POLL_AUTH) { app_say_now("@token_bad/token_bad", MELODY_ERROR); return; }
+    if (!u->ok && u->err == POLL_NET)  { app_say_now("@offline/offline", MELODY_ERROR); return; }
     if (!u->have_data) return;
     char s[120];
     time_t now = time(NULL);
@@ -362,9 +363,40 @@ static void say_status_of(const usage_t *u)
         long left = (long)(u->session_reset - now);
         if (left > WINDOW_5H_S) left = WINDOW_5H_S;
         int d = u->session_pct - (int)((WINDOW_5H_S - left) * 100 / WINDOW_5H_S);
-        snprintf(s + n, sizeof(s) - n, " %s", d > 10 ? "ahead" : d < -10 ? "room" : "on_pace");
+        snprintf(s + n, sizeof(s) - n, " %s", d > 10 ? "@ahead/ahead" : d < -10 ? "@room/room" : "@on_pace/on_pace");
     }
     app_say_now(s, MELODY_POLL_OK);
+}
+
+/* ------------------------------------------------------------------ */
+/* Wit: a remark now and then (v2.4)                                    */
+/* ------------------------------------------------------------------ */
+/* Only while you're evidently at it (session usage just rose), at most once
+ * per 45-105 min, never in the first 20 min after boot. app_say() keeps it
+ * out of quiet hours, and Talk / mute / the Wit setting silence it. */
+#define QUIP_FIRST_MIN  20
+#define QUIP_GAP_MIN    45
+#define QUIP_SPAN_MIN   60
+
+static void maybe_quip(const usage_t *u, bool active)
+{
+    static int64_t next_us;
+    int64_t now_us = esp_timer_get_time();
+    if (!next_us) next_us = now_us + QUIP_FIRST_MIN * 60 * 1000000LL;
+    settings_t c;
+    settings_get(&c);
+    if (!c.wit || !active || now_us < next_us) return;
+    next_us = now_us + (QUIP_GAP_MIN + (long long)(esp_random() % QUIP_SPAN_MIN)) * 60 * 1000000LL;
+
+    time_t now = time(NULL);
+    struct tm tm;
+    localtime_r(&now, &tm);
+    const char *cat = "@idle";
+    if (now > 1600000000 && (tm.tm_hour >= 23 || tm.tm_hour < 5)) cat = "@idle_late";
+    else if (!g_sys.ext_power && g_sys.batt_pct >= 0 && g_sys.batt_pct <= 20) cat = "@idle_batt";
+    else if (u->session_pct >= 70 || u->weekly_pct >= 85)    cat = "@idle_hot";
+    ESP_LOGI(TAG, "wit: %s", cat);
+    app_say(cat, MELODY_NONE);
 }
 
 void usage_say_status(void)
@@ -461,7 +493,7 @@ static void poll_task(void *arg)
             if (res != prev_res && !s_announce) {
                 screen_wake();
                 if (res == POLL_AUTH) net_notify_host();   /* ask the Mac for a token */
-                app_say(res == POLL_AUTH ? "token_bad" : "offline", MELODY_ERROR);
+                app_say(res == POLL_AUTH ? "@token_bad/token_bad" : "@offline/offline", MELODY_ERROR);
             } else if (res != prev_res) {
                 screen_wake();
                 if (res == POLL_AUTH) net_notify_host();
@@ -469,7 +501,7 @@ static void poll_task(void *arg)
         } else if (res == POLL_OK) {
             if (prev_res != POLL_OK) {                     /* recovered */
                 screen_wake();
-                if (prev_res == POLL_NET && !s_announce) app_say("back", MELODY_NONE);
+                if (prev_res == POLL_NET && !s_announce) app_say("@back/back", MELODY_NONE);
             }
             int worst = u.session_pct > u.weekly_pct ? u.session_pct : u.weekly_pct;
             int prev  = prev_s > prev_w ? prev_s : prev_w;
@@ -477,20 +509,21 @@ static void poll_task(void *arg)
 
             if (prev >= 0) {
                 char say[96];
+                bool spoke = false;    /* one remark per poll */
                 if (worst >= 100 && prev < 100) {
                     time_t rst = u.session_pct >= 100 ? u.session_reset : u.weekly_reset;
                     time_t now = time(NULL);
                     if (rst > now && now > 1600000000)
-                        snprintf(say, sizeof(say), "limit . back_in ~%ld", (long)(rst - now));
+                        snprintf(say, sizeof(say), "@limit/limit . back_in ~%ld", (long)(rst - now));
                     else
-                        snprintf(say, sizeof(say), "limit");
-                    app_say(say, MELODY_THRESHOLD_85);
+                        snprintf(say, sizeof(say), "@limit/limit");
+                    app_say(say, MELODY_THRESHOLD_85); spoke = true;
                 } else if (worst >= USAGE_RED_PCT && prev < USAGE_RED_PCT) {
-                    snprintf(say, sizeof(say), "warning %s #%d percent", window_at(&u), worst);
-                    app_say(say, MELODY_THRESHOLD_85);
+                    snprintf(say, sizeof(say), "@warning/warning %s #%d percent", window_at(&u), worst);
+                    app_say(say, MELODY_THRESHOLD_85); spoke = true;
                 } else if (worst >= USAGE_AMBER_PCT && prev < USAGE_AMBER_PCT) {
-                    snprintf(say, sizeof(say), "heads_up %s #%d percent", window_at(&u), worst);
-                    app_say(say, MELODY_THRESHOLD_60);
+                    snprintf(say, sizeof(say), "@heads_up/heads_up %s #%d percent", window_at(&u), worst);
+                    app_say(say, MELODY_THRESHOLD_60); spoke = true;
                 }
 
                 /* A window rolled over: usage fell sharply from a real level. */
@@ -498,10 +531,11 @@ static void poll_task(void *arg)
                 bool w_reset = prev_w >= 25 && u.weekly_pct + 15 < prev_w;
                 if (s_reset || w_reset) {
                     lock(); s_u.resets++; s_u.seq++; unlock();
-                    app_say("fresh", MELODY_RESET);
+                    app_say("@fresh/fresh", MELODY_RESET); spoke = true;
                 }
                 if (u.session_pct != prev_s || u.weekly_pct != prev_w)
                     screen_wake();
+                if (!spoke) maybe_quip(&u, u.session_pct > prev_s && u.session_pct < 100);
             }
             prev_s = u.session_pct;
             prev_w = u.weekly_pct;

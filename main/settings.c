@@ -37,7 +37,9 @@ static const settings_t DEFAULTS = {
     .h24        = false,
     .talk       = true,
     .listen     = true,
-    .listen_batt = false,
+    .listen_batt = true,      /* v2.3: "Jarvis" works on battery too */
+    .wit        = true,
+    .brain      = true,
     .notify_ip  = "",
 };
 
@@ -111,6 +113,8 @@ void settings_init(void)
         get_bool(h, "talk", &s_cfg.talk);
         get_bool(h, "listen", &s_cfg.listen);
         get_bool(h, "listen_batt", &s_cfg.listen_batt);
+        get_bool(h, "wit", &s_cfg.wit);
+        get_bool(h, "brain", &s_cfg.brain);
         get_str(h, "notify_ip", s_cfg.notify_ip, sizeof(s_cfg.notify_ip));
 
         size_t len = sizeof(s_token);
@@ -170,6 +174,8 @@ void settings_put(const settings_t *in)
         nvs_set_u8(h, "talk", c.talk);
         nvs_set_u8(h, "listen", c.listen);
         nvs_set_u8(h, "listen_batt", c.listen_batt);
+        nvs_set_u8(h, "wit", c.wit);
+        nvs_set_u8(h, "brain", c.brain);
         nvs_set_str(h, "notify_ip", c.notify_ip);
         nvs_commit(h);
         nvs_close(h);

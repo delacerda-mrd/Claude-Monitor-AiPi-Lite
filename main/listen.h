@@ -2,8 +2,7 @@
  * listen.h  --  offline voice control: "Jarvis" wake word (esp-sr WakeNet9)
  * then an English command (MultiNet7), all on-device.
  *
- * Extension point for a future "brain on the Mac": handle_unknown() in
- * listen.c is where an unmatched utterance would be shipped to the host.
+ * What the command set doesn't match goes to the "brain on the Mac" (brain.h).
  */
 #pragma once
 
@@ -15,6 +14,7 @@ typedef enum {
     LISTEN_IDLE,        /* waiting for the wake word                    */
     LISTEN_PROMPT,      /* woke; playing "Yes?"                         */
     LISTEN_COMMAND,     /* recognizing a command                        */
+    LISTEN_THINKING,    /* the Mac is working on an unmatched utterance */
 } listen_state_t;
 
 bool listen_init(void);                 /* load models + start tasks; false if no models */

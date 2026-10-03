@@ -46,6 +46,7 @@
 #include "secrets_compat.h"
 #include "settings.h"
 #include "listen.h"
+#include "brain.h"
 #include "ui.h"
 #include "usage.h"
 #include "voice.h"
@@ -294,9 +295,13 @@ static esp_err_t status_get(httpd_req_t *req)
     cJSON_AddBoolToObject(st, "talk", c.talk);
     cJSON_AddBoolToObject(st, "listen", c.listen);
     cJSON_AddBoolToObject(st, "listen_batt", c.listen_batt);
-    static const char *LS[] = { "off", "idle", "prompt", "command" };
+    cJSON_AddBoolToObject(st, "wit", c.wit);
+    cJSON_AddBoolToObject(st, "brain", c.brain);
+    static const char *LS[] = { "off", "idle", "prompt", "command", "thinking" };
     cJSON *li = cJSON_AddObjectToObject(r, "listen");
     cJSON_AddStringToObject(li, "state", LS[listen_state()]);
+    cJSON_AddStringToObject(li, "brain", brain_status());
+    cJSON_AddStringToObject(li, "brain_heard", brain_heard());
     cJSON_AddStringToObject(li, "heard", listen_heard());
     cJSON_AddNumberToObject(li, "level_db", (int)listen_level_db());
     cJSON *vo = cJSON_AddObjectToObject(r, "voice");
@@ -398,7 +403,7 @@ static esp_err_t token_post(httpd_req_t *req)
 
     settings_set_token(tok);
     usage_poll_now();
-    app_say("token_new", MELODY_TOKEN_SAVED);
+    app_say("@token_new/token_new", MELODY_TOKEN_SAVED);
 
     /* Remember who feeds us tokens: that host gets the online-notify ping. */
     char ip[16];
@@ -439,6 +444,8 @@ static esp_err_t settings_post(httpd_req_t *req)
     if (cJSON_IsBool(v = cJSON_GetObjectItem(j, "talk")))    c.talk       = cJSON_IsTrue(v);
     if (cJSON_IsBool(v = cJSON_GetObjectItem(j, "listen")))  c.listen     = cJSON_IsTrue(v);
     if (cJSON_IsBool(v = cJSON_GetObjectItem(j, "listen_batt"))) c.listen_batt = cJSON_IsTrue(v);
+    if (cJSON_IsBool(v = cJSON_GetObjectItem(j, "wit"))) c.wit = cJSON_IsTrue(v);
+    if (cJSON_IsBool(v = cJSON_GetObjectItem(j, "brain"))) c.brain = cJSON_IsTrue(v);
     bool test = cJSON_IsTrue(cJSON_GetObjectItem(j, "test"));
     cJSON_Delete(j);
     settings_put(&c);

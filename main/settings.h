@@ -23,7 +23,9 @@ typedef struct {
     bool     h24;           /* 24-hour clock                                 */
     bool     talk;          /* spoken announcements (else tones)             */
     bool     listen;        /* "Jarvis" wake word + voice commands           */
-    bool     listen_batt;   /* ...also on battery (costs battery)            */
+    bool     listen_batt;   /* ...also on battery (default on; costs battery) */
+    bool     brain;         /* unmatched speech -> brain_server.py on the Mac */
+    bool     wit;           /* unprompted remarks now and then (v2.4)        */
     char     notify_ip[16]; /* host that last pushed a token (online-notify) */
 } settings_t;
 

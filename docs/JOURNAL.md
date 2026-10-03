@@ -6,11 +6,15 @@
 
 ---
 
-## Current Status (updated 2026-10-02)
+## Current Status (updated 2026-10-03)
 
-**Phase:** **v2.2 deployed** (fw 2.2.0) — offline **"Jarvis" voice control** works
-end to end but command recognition is unreliable (tuning in progress). Talks (16 kHz
-Daniel pack, "jarvis" style). PSRAM on, both buttons, real charge pins.
+**Phase:** **v2.5 deployed** (fw 2.5.0 via OTA, valid) — **brain on the Mac**: what the
+offline command set misses goes to `brain_server.py` (:5556, launchd agent
+`com.claude-meter.brain`): whisper.cpp small.en → `claude -p` (sonnet, no tools, JARVIS
+persona, meter state, 10-min memory) → reply in the meter's voice + optional action.
+Mac side verified with a simulated request (6.4 s round trip); **the meter → Mac path
+is not yet verified by voice** — user to say "Jarvis, <question>". v2.4 personality +
+lighter pitch deployed; v2.3 voice smoothing verified by ear.
 
 **Resume here (voice tuning):** wake word ≈ 100 % (12/12). Commands hit ~4 of 9
 (p 0.14–0.23); misses log `no command (speech heard … peak −10 dBFS, best guess "")`.
@@ -53,6 +57,55 @@ min ~91–100 KB (59 KB under a screenshot burst). Details: BRINGUP Phase 7.
 ---
 
 ## Session Log (newest first)
+
+### 2026-10-03 (Mac, ~01:30) — v2.5: brain on the Mac
+User: "let's implement the brain on the mac". Design: offline MultiNet first (instant);
+unmatched speech → Mac. Device: `brain.c` (own task, POSTs the utterance from the PSRAM
+mic ring + `X-Meter-State`, plays the PCM reply via new `audio_play_pcm_async`),
+`LISTEN_THINKING` state + pill, VAD end-of-speech (1 s), window 6 → 8 s, setting
+`brain`. Mac: `brain_server.py` on the system python (has the Local Network grant),
+`whisper-cli` (brew `whisper-cpp`, model `~/.cache/claude-meter/ggml-small.en.bin`),
+`claude -p` (subscription auth works under launchd), `make_voice.py --say` under brew
+python for the voice. Timings: whisper 0.65 s warm (19 s on the very first run — Metal
+warm-up), claude ~2.5–3 s, voice ~1.5–2 s. `--bare` would skip the Keychain → no auth;
+don't use it. Pack rebuilt with `@thinking` / `@nobrain` quips.
+
+### 2026-10-03 (Mac, later) — v2.4: Jarvis wit, lighter voice, bigger voice partition
+User: v2.3 voice "sounds much better now" (E-47 confirmed), but "too deep for a jarvis
+clone"; wants Jarvis-style wit — random, not repetitive, giving him a hard time.
+- `--pitch` 0.95 → 1.04, rate 180 → 176.
+- `@cat` script tokens → random `q_cat_NN` variant, avoiding the last ≤4 picks
+  (`voice.c`); `@cat/name` falls back on old packs. 25 categories, ~130 original lines,
+  addressed to "sir". All device announcements and voice replies now use them.
+- Wit: `maybe_quip()` in the poll loop — idle / late / low-battery / hot pools, only
+  when session usage just rose, 45–105 min apart, not in the first 20 min, not on a poll
+  that already spoke. New setting `wit` (default on, dashboard checkbox).
+- Pack grew to 4.5 MB → `voice` partition 3 → 5.9 MB (same offset, so the old pack
+  survived the USB flash), `model` moved 0x920000 → 0xC00000. Flash + boot + model load
+  + pack upload verified; sample lines played. Not committed yet.
+
+### 2026-10-03 (Mac) — v2.3: smooth voice, smaller rings, Jarvis on battery
+User: wake on battery ("especially on battery"); rings a bit smaller (the weekly reset
+"3d1h" sat on the outer ring once it filled); voice "very choppy between words", "first
+part of some words cuts off", wants it more Jarvis-like.
+- **Battery:** listening was USB-only unless `listen_batt` (default off) → default on,
+  and set on the device via `/api/settings`.
+- **Rings:** r56/r47 w7 → r50/r42 w6, center (64,70) → (64,67); centre text up 4–6 px.
+  Screenshot verified: corners clear the outer ring by ~5 px.
+- **Choppy:** audio task ran at prio 3 under esp-sr feed/detect (5) → I2S DMA starved
+  while listening, auto_clear filled the gaps with silence. Now prio 6, TX DMA 120 ms.
+  Clips were joined with 55 ms gaps + each word rendered alone (full-stop intonation).
+  Now: no gap, numbers fused with units (`p42`, `h3`, `m15`, `d2`), continuing
+  fragments rendered mid-sentence via `say "… [[slnc 500]] and then"` and cut.
+- **Cut-off onsets:** trim threshold was −36 dBFS absolute with 15 ms pad (ate soft
+  h/s/f); now −46 dB re peak with 30 ms lead; plus 40 ms amp pre-roll per stream (PA
+  started 5 ms before the first sample) and a 160 ms drain (was 64 ms < the DMA ring,
+  so tails could be clipped too).
+- **Tone:** dropped the 9/16 ms comb ("phasey" on the tiny speaker); new chain = 5 %
+  deeper/slower, HPF 130 Hz, −2.5 dB @300, +3.5 dB @3.2 k, 3:1 compression,
+  loudness-matched clips. Pack grew 146 → 295 clips, so it moved to IMA-ADPCM (v2;
+  firmware still plays v1 µ-law). C decoder checked bit-exact against the Python one.
+- Not yet heard by ear (Claude can't listen) — user to judge. Not committed yet.
 
 ### 2026-10-02 (Mac, ~03:00) — v2.2: offline "Jarvis" voice control
 User: wake word "R1" if easy, else Jarvis; keep it offline, a Mac "brain" maybe later.

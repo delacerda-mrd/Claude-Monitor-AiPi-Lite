@@ -104,7 +104,7 @@ green while charging).
 
 | Page | Content |
 |------|---------|
-| **RINGS** (home) | Concentric rings — outer 5 h, inner 7 d — level-colored, tracks tinted; count-up session % in the middle (no caption) with its reset countdown (or `token?`/`offline`); corners: 7 d % and 7 d reset |
+| **RINGS** (home) | Concentric rings — outer 5 h (r50), inner 7 d (r42), 6 px wide, centered (64,67), sized so the corner labels never sit on the outer ring — level-colored, tracks tinted; count-up session % in the middle (no caption) with its reset countdown (or `token?`/`offline`); corners: 7 d % and 7 d reset |
 | **PACE** | A card per window: %, bar with an **even-pace marker** (where usage would be if spent evenly), reset countdown, pace verdict (`+12 ahead` / `on pace` / `8 under`) |
 | **TREND** | 5 h chart of session (coral, gradient fill) + weekly (grey), live point at the right; projection `proj 87%` or, if on course to cap, `max @3:40` |
 | **CLAWD** | Clawd mood: dance-sway "All clear" (<25 %), coding "Cooking", thinking "Pace yourself" (≥60), surprise "Whoa there" (≥85), sleep "Rate limited" (≥100, with time to reset), look-around "Need a token"/"Offline", bounce "Fresh window!" after a reset |
@@ -136,25 +136,74 @@ Level colors: sage < 60 % ≤ amber < 85 % ≤ red. Palette = HY3 theme (Anthrop
 Boot blue · green / amber / red by the worse window · red on error · **slow red
 breathe at ≥ 100 %** · **slow blue breathe in setup mode**.
 
-## Voice control (v2.2) — offline "Jarvis"
+## Voice control (v2.2) — offline "Jarvis", brain on the Mac (v2.5)
 `listen.c`: mic (ES8311 ADC, GPIO13, 16 kHz, 24 dB PGA) → feed task (core 0) → esp-sr AFE
 (VAD + WakeNet9 `wn9_jarvis_tts`) → detect task (core 1). On "Jarvis": "Yes?", LED
-cyan, *Listening…* pill; MultiNet7 `mn7_en` gets a 6 s window for ~40 phrases (usage,
+cyan, *Listening…* pill; MultiNet7 `mn7_en` gets an 8 s window for ~40 phrases (usage,
 reset, weekly, refresh, pace, pages, mute/unmute, volume, screen off, time, battery,
-who/thanks). Unmatched speech → "Sorry, I didn't catch that." (`handle_unknown()` is the
-hook for a future Mac brain). Wake words are ignored while the meter speaks. Listening
-runs on USB power (setting `listen`, default on) and on battery only if `listen_batt`.
+who/thanks); the window also ends 1 s after speech stops (VAD). Unmatched speech →
+the **brain** (below) if available, else "Sorry, I didn't catch that." Wake words are ignored while the meter speaks. Listening
+runs when `listen` is on (default) — on USB power and, since v2.3, on battery too
+(`listen_batt`, default on; the mic + WakeNet keep the CPU awake, so it costs battery).
+A wake word turns a blanked screen back on.
 TX stays enabled while listening (S3 duplex RX is clocked by TX). Models: `model`
-partition @0x920000 (USB flash writes srmodels.bin). Diagnostics: `/api/status`
+partition @0xC00000 (USB flash writes srmodels.bin). Diagnostics: `/api/status`
 `listen` (state, last heard, mic dBFS), `GET /api/rec.wav` (last attempt's raw audio),
 `POST /api/say {"listen":true}` (skip the wake word).
 
-## Audio & voice (v2.1)
+**Brain on the Mac** (`brain.c` ↔ `brain_server.py`, setting `brain`, default on).
+When MultiNet matches nothing but VAD heard speech, and the Mac is known (`notify_ip`)
+and Wi-Fi is up: the utterance (from 0.1 s before listening began, PSRAM copy of the
+mic ring) is POSTed raw (16 kHz s16le) to `http://<notify_ip>:5556/ask` with
+`X-Meter-State` (usage %, seconds to each reset, battery, USB/charging, local time). The
+meter says an `@thinking` line, state **THINKING** (*Thinking…* pill, wake word off).
+The Mac: whisper.cpp `small.en` → `claude -p --model sonnet --tools ""` with a JARVIS
+persona, the meter state and the last ≤6 turns from the past 10 min → `make_voice.py
+--say` (same voice chain) → 200 with raw PCM + `X-Heard` / `X-Reply` / optional
+`X-Action` (`page:rings|pace|trend|clawd|system`, `mute`, `unmute`, `louder`, `softer`,
+`screen_off`, `refresh` — Claude prefixes a `[tag]`). 204 = nothing intelligible →
+`@sorry`; no answer / error → `@nobrain`. The reply (≤40 s) is played from PSRAM by the
+audio task (`audio_play_pcm_async`); mute drops it, quiet hours don't (you asked).
+The pill then shows what whisper heard. Only requests from `claude-meter.local` (or
+`CLAUDE_METER_IP`) are served. `/api/status` `listen.brain` / `brain_heard`.
+Measured: whisper ~0.7–1.3 s, Claude ~2.5–3 s, voice ~1.5–2 s.
+
+## Audio & voice (v2.1, smoothed in v2.3)
 The meter **talks**. A clip pack built on the Mac with `say` (`tools/make_voice.py`,
-default voice Daniel, 24 kHz µ-law, 127 clips ≈ 106 s ≈ 2.4 MB) lives in the `voice`
-partition and is uploaded with `POST /voice` (no USB). `voice.c` turns a script — clip
-names, `#N` (0–100 as one word), `~S` (duration), `.` (pause) — into clips and streams
-them from flash through `audio_stream_*()` on the audio task.
+voice Daniel, 16 kHz IMA-ADPCM (pack v2; v1 µ-law packs still play), ~430 clips incl.
+the quip pools; the partition holds 5.9 MB since v2.4) lives in the `voice` partition and is uploaded with
+`POST /voice` (no USB). `voice.c` turns a script — clip names, `#N`, `~S` (duration),
+`.` (240 ms pause) — into clips and streams them from flash through `audio_stream_*()`
+on the audio task. Clips join with **no gap** (each carries a 30 ms soft lead-in and
+its decay tail).
+
+How it stays smooth (v2.3): numbers are **fused with their unit** — `#N percent` plays
+`pN` ("forty two percent."), durations play `dN`/`hN`/`mN` ("three hours", "twelve
+minutes."), falling back to separate words on an older pack; fragments that lead into
+more speech ("Session at", "resets in", "two hours") are rendered **mid-sentence**
+(`say "Session at [[slnc 500]] and then"`, cut at the silence) so they don't end on a
+full-stop intonation. Voice chain ("jarvis"): rendered at 15385 Hz and played at 16 kHz
+(`--pitch 1.04`: 4 % lighter and quicker — v2.3's 0.95 was "too deep for Jarvis"), 130 Hz high-pass, −2.5 dB @300 Hz, +3.5 dB @3.2 kHz, 3:1
+compressor, each clip loudness-matched to −17 dBFS. `make_voice.py --audition
+"<script>"` plays a script on the Mac exactly as the meter joins it.
+
+**Personality (v2.4).** Scripts use `@cat` (`@wake`, `@sorry`, `@thanks`, `@hello`,
+`@ahead`/`@on_pace`/`@room`, `@heads_up`, `@warning`, `@limit`, `@fresh`, `@online`,
+`@offline`, `@back`, `@token_bad`, `@token_new`, `@night`, `@refresh`, `@mute`,
+`@unmute`, `@louder`, `@softer`, `@thinking`, `@nobrain`): `voice.c` plays a random `q_cat_NN` clip, never one of
+the last ≤4 it picked for that category (`@cat/name` falls back to clip `name` on an
+older pack). Lines are dry and needling, addressed to "sir" (pools in
+`tools/make_voice.py` `QUIPS`). **Wit** (setting `wit`, default on): unprompted remarks
+— `@idle`, or `@idle_late` (23:00–05:00), `@idle_batt` (on battery ≤20 %), `@idle_hot`
+(session ≥70 % or weekly ≥85 %) — only on a poll where session usage just rose (you're
+at it), not when that poll already announced something, at most once per 45–105 min
+(random), none in the first 20 min after boot. Unprompted → quiet hours silence them.
+
+Playback timing: the audio task runs at priority **6**, above esp-sr's feed/detect
+tasks (5) — at 3 it was starved while listening and the I2S DMA ran dry (auto_clear
+→ silence → choppy speech). TX DMA = 6 × 320 frames (120 ms). Each stream starts with
+40 ms of silence after the amp (PA, GPIO9) turns on — else the first syllable is lost —
+and ends with 160 ms of silence (> the DMA ring) before the amp is cut.
 
 | Event | Says (tone if Talk is off / no pack) |
 |---|---|
@@ -173,8 +222,9 @@ quiet hours (off by default). **Quiet hours silence only unprompted announcement
 things you explicitly ask for — hold the button, "Say status", the volume test —
 still speak (`app_say_now`). **Mute silences everything.** The audio task logs every
 melody / script and `stream: N bytes written, err=…` for diagnosis. Dashboard "Say status"
-= `POST /api/say`. The end of every stream is flushed with ~120 ms of silence because
-the I2S channel runs with `auto_clear` off (else the DMA ring replays as a buzz).
+= `POST /api/say` (`{"script":"session_at #42 percent"}` speaks any script). The I2S
+TX runs with `auto_clear` on (TX must keep clocking the mic), so an idle or starved TX
+plays silence, never a replayed buffer.
 
 ## Web (`http://claude-meter.local/`)
 `GET /` dashboard (rings, pace, 5 h chart, device, settings, token, Wi-Fi, OTA upload) ·
@@ -188,11 +238,12 @@ once and remembers it).
 
 ## Settings (NVS `cfg`)
 `tz` (POSIX, default US Eastern) · `vol` · `mute` · `quiet` + `q_from`/`q_to` ·
-`bl_usb` / `bl_batt` (%) · `blank_s` · `h24` · `talk` · `notify_ip` · `token`.
+`bl_usb` / `bl_batt` (%) · `blank_s` · `h24` · `talk` · `wit` · `listen` · `listen_batt` · `brain` · `notify_ip` · `token`.
 
 ## OTA & rollback (unchanged from v1)
-Two 2 MB slots (plus the 4 MB `voice` data partition at 0x420000, added in v2.1 — the
-one change that needed a USB flash; OTA never touches it). `POST /ota` streams into the inactive slot, verifies, flips, reboots.
+Partitions (`partitions.csv`): two 3 MB app slots, `voice` 5.9 MB @0x620000 (grown in
+v2.4; same offset, so a pack survives), `model` 4 MB @0xC00000 (esp-sr, written by USB
+flash). Partition changes need a USB flash; OTA never touches the data partitions. `POST /ota` streams into the inactive slot, verifies, flips, reboots.
 `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`: an OTA image is confirmed after **15 s online**
 (boot stage ≥ FETCH, never in setup mode); a crash before that rolls back on the next
 reset. USB flashes are never rolled back (recovery path).

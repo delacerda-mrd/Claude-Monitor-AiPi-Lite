@@ -9,6 +9,9 @@
  * USB flash). Everything runs from PSRAM. Detections are ignored while the
  * meter itself is talking, so its own voice can't wake it.
  *
+ * Anything the command set doesn't match goes to the "brain on the Mac"
+ * (brain.c) when it's reachable: whisper + Claude there, answer spoken back.
+ *
  * Listening runs when enabled in settings and on USB power -- or on battery
  * too if "listen on battery" is set (the mic path costs some battery).
  */
@@ -34,6 +37,7 @@
 
 #include "app.h"
 #include "audio.h"
+#include "brain.h"
 #include "led.h"
 #include "power.h"
 #include "settings.h"
@@ -42,7 +46,9 @@
 
 static const char *TAG = "listen";
 
-#define COMMAND_WINDOW_MS   6000
+#define COMMAND_WINDOW_MS   8000     /* room for a question for the brain */
+#define END_SILENCE_MS      1000     /* speech then this much quiet = done */
+#define BRAIN_LEAD_SAMPLES  1600     /* send 0.1 s before listening began  */
 #define PROMPT_GAP_MS       60       /* after "Yes?" ends, before listening */
 #define SELF_GUARD_MS       400      /* ignore wake words this long after we spoke */
 
@@ -119,6 +125,7 @@ static int16_t       *s_ring, *s_take;
 static volatile int   s_ring_pos;            /* next write index */
 static int            s_take_len;
 static volatile int   s_take_from = -1;      /* ring index at wake time */
+static int            s_cmd_pos;             /* ring index when listening began */
 
 const int16_t *listen_last_take(int *samples) { *samples = s_take_len; return s_take; }
 
@@ -140,6 +147,33 @@ static void take_snapshot(void)
     s_take_from = -1;
 }
 static volatile int64_t          s_heard_us;
+
+/* The utterance (from just before listening began until now) for the brain,
+ * in PSRAM. */
+static int16_t *cmd_audio(int *samples)
+{
+    if (!s_ring) return NULL;
+    int from = (s_cmd_pos - BRAIN_LEAD_SAMPLES + REC_SAMPLES) % REC_SAMPLES;
+    int n = (s_ring_pos - from + REC_SAMPLES) % REC_SAMPLES;
+    int16_t *b = n ? heap_caps_malloc(n * sizeof(int16_t), MALLOC_CAP_SPIRAM) : NULL;
+    if (!b) return NULL;
+    for (int i = 0; i < n; i++) b[i] = s_ring[(from + i) % REC_SAMPLES];
+    *samples = n;
+    return b;
+}
+
+/* Unmatched speech -> the Mac. true = asked (state goes THINKING). */
+static bool try_brain(void)
+{
+    if (!brain_available()) return false;
+    int n = 0;
+    int16_t *pcm = cmd_audio(&n);
+    if (!pcm) return false;
+    if (!brain_ask(pcm, n)) { heap_caps_free(pcm); return false; }
+    s_state = LISTEN_THINKING;
+    app_say_now("@thinking/refreshing", MELODY_NONE);
+    return true;
+}
 
 listen_state_t listen_state(void)   { return s_state; }
 const char    *listen_heard(void)   { return s_heard; }
@@ -193,7 +227,7 @@ static void say_pace(void)
     if (left < 0) left = 0;
     if (left > WINDOW_5H_S) left = WINDOW_5H_S;
     int d = u.session_pct - (int)((WINDOW_5H_S - left) * 100 / WINDOW_5H_S);
-    app_say_now(d > 10 ? "ahead" : d < -10 ? "room" : "on_pace", MELODY_POLL_OK);
+    app_say_now(d > 10 ? "@ahead/ahead" : d < -10 ? "@room/room" : "@on_pace/on_pace", MELODY_POLL_OK);
 }
 
 static void set_volume(int delta)
@@ -203,24 +237,23 @@ static void set_volume(int delta)
     int v = c.volume + delta;
     c.volume = v < 40 ? 40 : v > 100 ? 100 : v;
     settings_put(&c);
-    app_say_now(delta > 0 ? "louder" : "softer", MELODY_BUTTON);
+    app_say_now(delta > 0 ? "@louder/louder" : "@softer/softer", MELODY_BUTTON);
 }
 
 static void set_mute(bool on)
 {
     settings_t c;
     settings_get(&c);
-    if (on) app_say_now("quiet_on", MELODY_NONE);   /* say it before going quiet */
+    if (on) app_say_now("@mute/quiet_on", MELODY_NONE);   /* say it before going quiet */
     c.mute = on;
     settings_put(&c);
-    if (!on) app_say_now("quiet_off", MELODY_BUTTON);
+    if (!on) app_say_now("@unmute/quiet_off", MELODY_BUTTON);
 }
 
-/* Unmatched speech. Offline for now: say so. A future "brain on the Mac"
- * would ship the utterance audio to the host here instead. */
+/* Unmatched speech with no brain to ask. */
 static void handle_unknown(bool heard_speech)
 {
-    if (heard_speech) app_say_now("sorry", MELODY_ERROR);
+    if (heard_speech) app_say_now("@sorry/sorry", MELODY_ERROR);
 }
 
 static void handle_command(int id)
@@ -236,7 +269,7 @@ static void handle_command(int id)
         app_say_now(s, MELODY_POLL_OK);
         say_reset("weekly_resets", u.weekly_reset);
         break;
-    case CMD_REFRESH: app_say_now("refreshing", MELODY_BUTTON); usage_announce_next(); usage_poll_now(); break;
+    case CMD_REFRESH: app_say_now("@refresh/refreshing", MELODY_BUTTON); usage_announce_next(); usage_poll_now(); break;
     case CMD_PACE:    ui_request(UI_REQ_PAGE_PACE); say_pace(); break;
     case CMD_NEXT:    ui_request(UI_REQ_NEXT); app_sound_now(MELODY_BUTTON); break;
     case CMD_PREV:    ui_request(UI_REQ_PREV); app_sound_now(MELODY_BUTTON); break;
@@ -248,10 +281,10 @@ static void handle_command(int id)
     case CMD_UNMUTE:  set_mute(false); break;
     case CMD_LOUDER:  set_volume(+10); break;
     case CMD_SOFTER:  set_volume(-10); break;
-    case CMD_SCREEN_OFF: app_say_now("night", MELODY_NONE); ui_request(UI_REQ_SCREEN_OFF); break;
+    case CMD_SCREEN_OFF: app_say_now("@night/night", MELODY_NONE); ui_request(UI_REQ_SCREEN_OFF); break;
     case CMD_TIME:    say_time(); break;
-    case CMD_THANKS:  app_say_now("welcome", MELODY_BUTTON); break;
-    case CMD_WHO:     app_say_now("intro", MELODY_BUTTON); break;
+    case CMD_THANKS:  app_say_now("@thanks/welcome", MELODY_BUTTON); break;
+    case CMD_WHO:     app_say_now("@hello/intro", MELODY_BUTTON); break;
     case CMD_BATTERY:
         if (g_sys.batt_pct < 0) { app_say_now("sorry", MELODY_ERROR); break; }
         snprintf(s, sizeof(s), "battery_at #%d percent%s", g_sys.batt_pct,
@@ -305,7 +338,7 @@ static void finish(void)
 static void detect_task(void *arg)
 {
     (void)arg;
-    int64_t t_state = 0, last_spoke = 0, first_speech = 0;
+    int64_t t_state = 0, last_spoke = 0, first_speech = 0, last_speech = 0;
     bool heard_speech = false, prompt_played = false;
     float peak_db = -96.0f;
     for (;;) {
@@ -336,7 +369,7 @@ static void detect_task(void *arg)
                 s_heard[0] = '\0';
                 screen_wake();
                 led_set_listening(true);
-                app_say_now("yes", MELODY_BUTTON);
+                app_say_now("@wake/yes", MELODY_BUTTON);
             }
             break;
         }
@@ -348,6 +381,7 @@ static void detect_task(void *arg)
             if ((prompt_played || now - t_state > 250 * 1000) && !audio_is_playing() &&
                 now - last_spoke > PROMPT_GAP_MS * 1000) {
                 s_mn->clean(s_mn_data);
+                s_cmd_pos = s_ring_pos;
                 s_state = LISTEN_COMMAND;
                 t_state = now;
             } else if (now - t_state > 4000 * 1000) {
@@ -358,7 +392,9 @@ static void detect_task(void *arg)
             if (res->vad_state == VAD_SPEECH) {
                 if (!heard_speech) first_speech = now;
                 heard_speech = true;
+                last_speech = now;
             }
+            bool done_talking = heard_speech && now - last_speech > END_SILENCE_MS * 1000LL;
             if (res->data_volume > peak_db) peak_db = res->data_volume;
             esp_mn_state_t st = s_mn->detect(s_mn_data, res->data);
             if (st == ESP_MN_STATE_DETECTED) {
@@ -372,18 +408,30 @@ static void detect_task(void *arg)
                 take_snapshot();
                 finish();
                 handle_command(id);
-            } else if (st == ESP_MN_STATE_TIMEOUT || now - t_state > (COMMAND_WINDOW_MS + 500) * 1000LL) {
+            } else if (st == ESP_MN_STATE_TIMEOUT || done_talking ||
+                       now - t_state > (COMMAND_WINDOW_MS + 500) * 1000LL) {
                 esp_mn_results_t *r = s_mn->get_results(s_mn_data);
                 ESP_LOGI(TAG, "no command (speech %s, +%lld ms after listen start, peak %.0f dBFS, best guess \"%s\")",
                          heard_speech ? "heard" : "none",
                          first_speech ? (long long)(first_speech - t_state) / 1000 : -1LL,
                          peak_db, r && r->raw_string[0] ? r->raw_string : "");
                 take_snapshot();
-                finish();
-                handle_unknown(heard_speech);
+                if (!heard_speech || !try_brain()) {
+                    finish();
+                    handle_unknown(heard_speech);
+                }
             }
             break;
         }
+        case LISTEN_THINKING:               /* wake word stays off until answered */
+            if (!brain_busy()) {
+                if (brain_heard()[0]) {     /* show what the Mac heard */
+                    strlcpy(s_heard, brain_heard(), sizeof(s_heard));
+                    s_heard_us = now;
+                }
+                finish();
+            }
+            break;
         }
     }
 }

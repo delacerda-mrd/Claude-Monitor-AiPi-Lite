@@ -272,20 +272,21 @@ static void lb_build(void)
     s_lb.shown = -1;
 }
 
-/* 0 hidden, 1 listening, 2 showing what was heard (2.5 s) */
+/* 0 hidden, 1 listening, 2 showing what was heard (2.5 s), 3 brain working */
 static void lb_update(void)
 {
     if (!s_lb.box) return;
     listen_state_t st = listen_state();
     int64_t heard = listen_heard_us();
     int want = (st == LISTEN_PROMPT || st == LISTEN_COMMAND) ? 1
+             : st == LISTEN_THINKING ? 3
              : (heard && esp_timer_get_time() - heard < 2500000) ? 2 : 0;
     if (want == s_lb.shown) return;
     s_lb.shown = want;
     if (!want) { lv_obj_add_flag(s_lb.box, LV_OBJ_FLAG_HIDDEN); return; }
     lv_obj_clear_flag(s_lb.box, LV_OBJ_FLAG_HIDDEN);
-    if (want == 1) {
-        set_text(s_lb.lbl, "Listening...");
+    if (want == 1 || want == 3) {
+        set_text(s_lb.lbl, want == 1 ? "Listening..." : "Thinking...");
         lv_obj_clear_flag(s_lb.dot, LV_OBJ_FLAG_HIDDEN);
         set_color(s_lb.lbl, HEX(C_TEXT));
     } else {
@@ -400,11 +401,13 @@ static void num_anim_cb(void *var, int32_t v)
 
 static void rings_build(lv_obj_t *s)
 {
-    /* center (64,70): outer r56/w7, inner r47/w7, 2 px gap */
-    s_r.arc_s = mk_ring(s, 112, 7);
-    lv_obj_set_pos(s_r.arc_s, 8, 14);
-    s_r.arc_w = mk_ring(s, 94, 7);
-    lv_obj_set_pos(s_r.arc_w, 17, 23);
+    /* center (64,67): outer r50/w6, inner r42/w6, 2 px gap. Small enough
+     * that the corner labels (7D %, weekly reset "6d23h") never sit on the
+     * outer ring's path. */
+    s_r.arc_s = mk_ring(s, 100, 6);
+    lv_obj_set_pos(s_r.arc_s, 14, 17);
+    s_r.arc_w = mk_ring(s, 84, 6);
+    lv_obj_set_pos(s_r.arc_w, 22, 25);
 
     /* "42" + "%" as one centered row; flex re-centers as digits change.
      * Bottom-aligned, then the % is lifted by the difference in the two
@@ -415,7 +418,7 @@ static void rings_build(lv_obj_t *s)
     lv_obj_set_flex_flow(s_r.pair, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(s_r.pair, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
     lv_obj_set_style_pad_column(s_r.pair, 1, 0);
-    lv_obj_align(s_r.pair, LV_ALIGN_TOP_MID, 0, 50);
+    lv_obj_align(s_r.pair, LV_ALIGN_TOP_MID, 0, 46);
     s_r.num = mk_label(s_r.pair, F_BIG, C_TEXT, "--");
     s_r.pct = mk_label(s_r.pair, F_TITLE, C_DIM, "%");
     lv_obj_set_style_pad_bottom(s_r.pct,
@@ -423,7 +426,7 @@ static void rings_build(lv_obj_t *s)
     s_r.shown = -1;
 
     s_r.sub = mk_label(s, F_MONO, C_DIM, "");
-    lv_obj_align(s_r.sub, LV_ALIGN_TOP_MID, 0, 88);
+    lv_obj_align(s_r.sub, LV_ALIGN_TOP_MID, 0, 82);
 
     /* corners: weekly value (left), weekly reset (right) */
     s_r.w_cap = mk_label(s, F_MONO, C_FAINT, "7D");

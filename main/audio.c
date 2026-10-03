@@ -22,6 +22,7 @@
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "freertos/queue.h"
+#include "esp_heap_caps.h"
 #include "driver/i2c.h"
 #include "driver/i2s_std.h"
 #include "driver/gpio.h"
@@ -140,11 +141,13 @@ static const note_t melody_setup[] = {
     {NOTE_G4, 200}, {NOTE_D5, 260},
 };
 
-/* Audio task job: a melody, or a spoken script. */
+/* Audio task job: a melody, a spoken script, or a PCM buffer (brain reply). */
 typedef struct {
     bool          speech;
     melody_type_t melody;
     char          script[120];
+    int16_t      *pcm;          /* owned by the job; freed after playback */
+    size_t        pcm_n;
 } audio_job_t;
 
 static QueueHandle_t audio_q = NULL;
@@ -312,6 +315,11 @@ static esp_err_t i2s_init(void)
      * buffers. Needed because TX must keep running while the mic listens:
      * in S3 full-duplex I2S the RX side is clocked by the TX unit. */
     chan_cfg.auto_clear = true;
+    /* 6 x 320 frames = 120 ms of TX buffer: the audio task must out-run the
+     * DMA while esp-sr keeps both cores busy, or auto_clear fills the gap
+     * with silence (heard as choppy speech). */
+    chan_cfg.dma_desc_num  = 6;
+    chan_cfg.dma_frame_num = 320;
     ESP_ERROR_CHECK(i2s_new_channel(&chan_cfg, &tx_handle, &rx_handle));
 
     i2s_std_config_t std_cfg = {
@@ -391,7 +399,9 @@ esp_err_t audio_init(void)
     audio_suspend();
 
     audio_q = xQueueCreate(4, sizeof(audio_job_t));
-    if (audio_q) xTaskCreate(audio_task, "audio", 4096, NULL, 3, NULL);
+    /* Above esp-sr's feed/detect tasks (5): it mostly blocks on the I2S
+     * write, but when it needs the CPU a late refill is an audible gap. */
+    if (audio_q) xTaskCreate(audio_task, "audio", 4096, NULL, 6, NULL);
 
     ESP_LOGI(TAG, "audio subsystem ready");
     return ESP_OK;
@@ -528,12 +538,36 @@ static void apply_pending_volume(void)
     }
 }
 
+static void play_pcm(const int16_t *pcm, size_t n)
+{
+    static int16_t st[256 * 2];
+    ESP_LOGI(TAG, "pcm: %u samples", (unsigned)n);
+    audio_stream_begin();
+    for (size_t off = 0; off < n; off += 256) {
+        size_t k = n - off < 256 ? n - off : 256;
+        for (size_t i = 0; i < k; i++) st[2 * i] = st[2 * i + 1] = pcm[off + i];
+        audio_stream_write(st, k);
+    }
+    audio_stream_end();
+}
+
 static void audio_task(void *arg)
 {
     (void)arg;
     static audio_job_t job;             /* big-ish; keep it off the stack */
     for (;;) {
         if (xQueueReceive(audio_q, &job, portMAX_DELAY) != pdTRUE) continue;
+        if (job.pcm) {
+            if (xSemaphoreTake(audio_mutex, pdMS_TO_TICKS(500)) == pdTRUE) {
+                audio_resume();
+                apply_pending_volume();
+                play_pcm(job.pcm, job.pcm_n);
+                audio_suspend();
+                xSemaphoreGive(audio_mutex);
+            }
+            heap_caps_free(job.pcm);
+            continue;
+        }
         if (!job.speech) { audio_play_melody(job.melody); continue; }
         ESP_LOGI(TAG, "say: %s", job.script);
         if (xSemaphoreTake(audio_mutex, pdMS_TO_TICKS(500)) != pdTRUE) continue;
@@ -550,6 +584,13 @@ void audio_play_async(melody_type_t type)
     if (!audio_q) return;
     audio_job_t job = { .speech = false, .melody = type };   /* copied by the queue */
     xQueueSend(audio_q, &job, 0);
+}
+
+bool audio_play_pcm_async(int16_t *pcm, size_t samples)
+{
+    if (!audio_q || !pcm || !samples) return false;
+    audio_job_t job = { .pcm = pcm, .pcm_n = samples };
+    return xQueueSend(audio_q, &job, 0) == pdTRUE;
 }
 
 bool audio_say_async(const char *script)
@@ -620,6 +661,16 @@ int audio_mic_read(int16_t *mono, int frames)
 static size_t s_stream_bytes;
 static esp_err_t s_stream_err;
 
+#define STREAM_PREROLL_MS  40     /* amp wake-up: else the first syllable is lost */
+#define STREAM_DRAIN_MS    160    /* > the 120 ms DMA ring, so the tail plays out */
+
+static void stream_zeros(int ms)
+{
+    static const int16_t zeros[256 * 2];
+    for (int f = SAMPLE_RATE * ms / 1000; f > 0; f -= 256)
+        audio_stream_write(zeros, f > 256 ? 256 : f);
+}
+
 void audio_stream_begin(void)
 {
     s_stream_bytes = 0;
@@ -630,6 +681,7 @@ void audio_stream_begin(void)
         i2s_channel_enable(tx_handle);
         tx_enabled = true;
     }
+    stream_zeros(STREAM_PREROLL_MS);
 }
 
 void audio_stream_write(const int16_t *stereo, size_t frames)
@@ -644,8 +696,7 @@ void audio_stream_end(void)
 {
     /* Let the DMA ring drain (auto_clear then sends silence), cut the amp,
      * and stop TX only if the mic doesn't need its clock. */
-    static const int16_t zeros[256 * 2];
-    for (int i = 0; i < 4; i++) audio_stream_write(zeros, 256);
+    stream_zeros(STREAM_DRAIN_MS);
     pa_set(false);
     if (!s_mic_on) {
         i2s_channel_disable(tx_handle);
