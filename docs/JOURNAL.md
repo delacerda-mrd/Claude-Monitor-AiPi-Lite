@@ -8,15 +8,22 @@
 
 ## Current Status (updated 2026-10-03)
 
-**Phase:** **v2.5 deployed** (fw 2.5.0 via OTA, valid) — **brain on the Mac**: what the
-offline command set misses goes to `brain_server.py` (:5556, launchd agent
-`com.claude-meter.brain`): whisper.cpp small.en → `claude -p` (sonnet, no tools, JARVIS
-persona, meter state, 10-min memory) → reply in the meter's voice + optional action.
-Mac side verified with a simulated request (6.4 s round trip); **the meter → Mac path
-is not yet verified by voice** — user to say "Jarvis, <question>". v2.4 personality +
-lighter pitch deployed; v2.3 voice smoothing verified by ear.
-**Layout change (2026-10-03):** shared code + host tools now live in `../meter_core`
-(must sit next to this repo); this repo is the AiPi-Lite board half.
+**Phase:** **v2.5 deployed** (fw 2.5.0, now built from `../meter_core` — OTA'd and
+valid 2026-10-03 09:55). **Brain on the Mac works end to end by voice** (user's own
+questions, brain log 01:49–01:51): whisper.cpp small.en → `claude -p` (sonnet, no tools,
+JARVIS persona, meter state, 10-min memory) → reply in the meter's voice (~5–7 s).
+v2.4 personality + lighter pitch deployed; v2.3 voice smoothing verified by ear.
+
+**Layout (since 2026-10-03):** this repo is the AiPi-Lite **board** half; the shared
+firmware + all host tools live in the sibling repo `../meter_core`
+(github.com/delacerda-mrd/meter_core, private) — it must be checked out next to this
+repo. launchd agents run from meter_core. The ES3C28P port starts fresh in
+`../Claude_Meter_ES3C28P` (only `BRIEF.md` so far; next step there: `/dev`).
+
+**Open:** user verdict on wit/tone over a day; "Jarvis" on battery; brain actions by
+voice; internal RAM free read 21.5 KB on the last boot (was 25–29 KB) — watch it;
+token push targets one meter only (multi-meter pass in meter_core before meter 2 goes
+online).
 
 **Resume here (voice tuning):** wake word ≈ 100 % (12/12). Commands hit ~4 of 9
 (p 0.14–0.23); misses log `no command (speech heard … peak −10 dBFS, best guess "")`.

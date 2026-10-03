@@ -128,6 +128,8 @@ Verified via serial log, `/api/status` and `/api/screen.bmp` (exact panel input)
 - [~] "Jarvis" on battery (listen_batt default on) — user to try unplugged
 - [x] Brain: meter → Mac → spoken answer, from real voice questions (brain log 01:49–01:51)
 - [~] Brain actions (page/mute/volume) from voice — verified Mac-side only
+- [x] Firmware built from `../meter_core`: OTA valid, polling OK, 435-clip pack, Jarvis idle, board probes in `/api/status`
+- [x] launchd agents reinstalled from meter_core; brain round trip from the new path (6.6 s)
 ### Voice (v2.1)
 - [x] USB flash with the new partition table; token + Wi-Fi survived (NVS offset unchanged)
 - [x] `POST /voice` installs the Daniel pack (2.4 MB in 15 s): `voice pack "Daniel": 127 clips`
