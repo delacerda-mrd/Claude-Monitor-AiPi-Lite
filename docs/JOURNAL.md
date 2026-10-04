@@ -67,6 +67,13 @@ min ~91–100 KB (59 KB under a screenshot burst). Details: BRINGUP Phase 7.
 
 ## Session Log (newest first)
 
+### 2026-10-03 (Mac, ~10:15) — lessons to DEV_KIT
+No firmware changes. Wrote this session's lessons to DEV_KIT (d3a6815): X-3 scripted
+`claude -p` flags (`--bare` skips the Keychain), X-4 whisper-cli first-run warm-up,
+`recipes/shared-core.md` (the meter_core split as a reusable pattern), ArcTrooper machine
+facts. Mac kept awake with `caffeinate` for 12 h for remote access. Next: `/dev` in
+`../Claude_Meter_ES3C28P`.
+
 ### 2026-10-03 (Mac, morning) — shared code split out to ../meter_core
 User wants the ES3C28P port as its own fresh project, with a shared core. Moved the
 board-independent firmware (`audio voice listen brain usage settings net web app.h
