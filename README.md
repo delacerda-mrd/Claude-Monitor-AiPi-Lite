@@ -169,7 +169,7 @@ and quiet hours silence both.
 
 Say **"Jarvis"**, then anything. The offline command set answers what it knows
 instantly; everything else goes to `brain_server.py` on the Mac that pushes the
-token: whisper.cpp transcribes it, `claude -p` (your subscription, no tools, a
+token: whisper.cpp transcribes it, `claude -p` (your subscription; web search and page fetch only — weather, flights, recipes, spellings — a
 JARVIS persona that knows the meter's live numbers and remembers the last 10 min)
 answers, and the reply comes back in the meter's own voice — about 5–7 s end to end.
 Claude can also drive the meter ("show me the pace page", "mute yourself").
