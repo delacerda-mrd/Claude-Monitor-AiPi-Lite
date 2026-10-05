@@ -119,7 +119,7 @@ Verified via serial log, `/api/status` and `/api/screen.bmp` (exact panel input)
 - [x] Models load from `model` partition; AFE + MultiNet up; fetch/mn chunks 512
 - [x] Mic streams (after keeping TX on); quiet room ≈ −45 dBFS
 - [x] "Jarvis" wake word: 12/12 wakes in user test, "Yes?" + banner + cyan LED
-- [~] Command recognition reliable — currently ~4/9; tuning pending (see JOURNAL)
+- [x] Command recognition reliable — user: "they all landed" after core `c04e994` (mic timeout fix), 2026-10-05
 ### v2.3–v2.5 (2026-10-03)
 - [x] Rings r50/r42: corner labels clear the outer ring (screenshot)
 - [x] Voice pack v2 (IMA-ADPCM) plays; C decoder bit-exact vs Python; smoother joins by ear

@@ -32,18 +32,14 @@ voice; internal RAM free read 21.5 KB on the last boot (was 25–29 KB) — watc
 token push targets one meter only (multi-meter pass in meter_core before meter 2 goes
 online).
 
-**Resume here:** voice tuning below — retest first:
-core `c04e994` fixed the mic read timeout (200 ms had been 20 ms), which may explain the
-command misses.
+**Voice commands: fixed.** User retested after this session's core update (2026-10-05):
+"they all landed" (was ~4 of 9 on 2026-10-03). Cause: the mic read timeout bug, core
+`c04e994` (`pdMS_TO_TICKS(200)` = 20 ms at 100 Hz, DEV_KIT E-50) — partial mic reads
+starved MultiNet. The PGA/NS/AGC suspects were never needed; the `/api/rec.wav` capture
+remains the first tool if misses come back.
 
-**Voice tuning (from 2026-10-03):** wake word ≈ 100 % (12/12). Commands hit ~4 of 9
-(p 0.14–0.23); misses log `no command (speech heard … peak −10 dBFS, best guess "")`.
-Suspects: clipping at 24 dB PGA with the user close, speaker/mic bleed, or no NS/AGC in
-the AFE pipeline (it runs VAD+WakeNet only). **Next step:** say a command, then
-`curl -o take.wav http://192.168.66.125/api/rec.wav` (raw mic from ~1 s before the wake
-to the end of the window) → check peak/clipping/level, `afplay` it. Then try PGA 18 dB,
-`cfg->ns_init/agc_init = true`, `set_det_threshold`. Mac is
-now the only machine — the Linux box is retired; toolchain + token pipeline moved here.
+**Resume here:** nothing pending on voice. Open items below (button feel, 24 h soak,
+battery-mode checks) or new features.
 
 **Known working (verified on hardware 2026-10-02):** v2 boots without `secrets.h`
 (Wi-Fi from NVS), token-free `/api/oauth/usage` polling, 429 → header fallback, Mac
@@ -75,6 +71,10 @@ min ~91–100 KB (59 KB under a screenshot burst). Details: BRINGUP Phase 7.
 ---
 
 ## Session Log (newest first)
+
+### 2026-10-05 (Mac, later) — voice commands all land
+User tried commands after the core update: "they all landed" (was ~4/9). Attributed to the
+mic read timeout fix (core `c04e994`, E-50) — no tuning changes made.
 
 ### 2026-10-05 (Mac, ~01:00) — ES3C28P updates ported; R2-D2 cockpit
 User: "port all the updates from the Claude Meter ES3C28P", then mid-way: "this aipi lite
