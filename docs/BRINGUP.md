@@ -132,8 +132,8 @@ Verified via serial log, `/api/status` and `/api/screen.bmp` (exact panel input)
 - [x] launchd agents reinstalled from meter_core; brain round trip from the new path (6.6 s)
 - [x] 2026-10-05 core `90f3c9a` + R2-D2 cockpit: OTA valid, 5 pages render clean (screenshots `docs/evidence/r2_cockpit.png`), internal free 54.8 KB (LVGL in PSRAM)
 - [x] Reminder notice: `/api/play` + `X-Text` shows bell + scrolling text; a button press dismisses it (screenshots)
-- [~] R2 colours on the glass, breathing glow, notice by eye — user to look
-- [ ] Voice pack with droid sounds (which set: R1 or an R2 set — user's call)
+- [x] R2 colours on the glass, breathing glow, notice — user: "all good" (2026-10-05)
+- [x] Voice pack 466 clips with R1's droid sounds (user kept them as-is), droid wake chirp plays
 ### Voice (v2.1)
 - [x] USB flash with the new partition table; token + Wi-Fi survived (NVS offset unchanged)
 - [x] `POST /voice` installs the Daniel pack (2.4 MB in 15 s): `voice pack "Daniel": 127 clips`

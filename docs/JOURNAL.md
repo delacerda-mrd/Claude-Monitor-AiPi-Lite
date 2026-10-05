@@ -14,8 +14,9 @@ valid 2026-10-05 01:15). This session ported the ES3C28P's updates: the shared c
 mic timeout fix `c04e994`), the cockpit layout recoloured **R2-D2** at the user's request,
 the reminder notice, `BOARD_AUDIO_VOL_MAX 75`, LVGL heap + Clawd canvas in PSRAM
 (internal free 24.8 → **54.8 KB**), die temperature. Screens: `docs/evidence/r2_cockpit.png`.
-**Voice pack not yet updated** (still 435 clips): the current pack's droid sounds are R1's
-*evil* astromech; waiting on the user whether this R2 meter gets those or its own R2 set.
+**Voice pack updated** to meter 2's (466 clips, R1's droid sounds; user: "use them as is,
+they are good as they are"). User confirmed the R2 look on the glass: "all good" — so the
+`LV_COLOR_16_SWAP` colours are right by eye too.
 
 **Brain on the Mac** works end to end by voice (2026-10-03): whisper.cpp small.en →
 `claude -p` → reply in the meter's voice (~5–7 s); now also web lookups and reminders.
@@ -31,9 +32,7 @@ voice; internal RAM free read 21.5 KB on the last boot (was 25–29 KB) — watc
 token push targets one meter only (multi-meter pass in meter_core before meter 2 goes
 online).
 
-**Resume here:** (1) the user's call on the droid-sound set for this meter, then build +
-upload the voice pack; (2) the user's eye on the R2 look on the glass (colours via
-`LV_COLOR_16_SWAP` still not confirmed by eye). (3) Voice tuning below — retest first:
+**Resume here:** voice tuning below — retest first:
 core `c04e994` fixed the mic read timeout (200 ms had been 20 ms), which may explain the
 command misses.
 
@@ -53,13 +52,11 @@ launchd token push + device→Mac online-notify, all 5 pages + splash render (ch
 min ~91–100 KB (59 KB under a screenshot burst). Details: BRINGUP Phase 7.
 
 **Known broken / unverified:**
-- Panel colors with `LV_COLOR_16_SWAP` not yet confirmed **by eye** (screenshots show
-  LVGL's output, not the glass). If red/blue look swapped, flip `rgb_ele_order` in
-  `display_init()` — do not hand-permute colors again.
 - Physical button gestures, fade-in, blanking, new tones, setup AP, battery mode: `[~]`.
 
 **Next steps:**
-- [ ] User: confirm colors + button feel on the device; report anything off.
+- [x] Colours confirmed by eye (2026-10-05, R2 look "all good").
+- [ ] User: button feel on the device; report anything off.
 - [ ] 24 h soak (token rotation across the 4 h agent cycle).
 - [ ] Optional: exercise setup mode (forget Wi-Fi from the dashboard → AP + QR).
 
@@ -97,7 +94,9 @@ is blue with white text. let's make this device R2 D2 themed."
 - **HW (this unit):** three OTAs, valid; internal free 24.8 KB → 54.8 KB; all five pages
   + the notice checked by screenshot; notice test via `/api/play` with a silent clip and
   `X-Text`, dismissed by `/api/button`. App 2.87 MB, 9 % free.
-- **Not done:** voice pack upload (droid-set question to the user); colours by eye.
+- Then: user chose R1's droid sounds as-is for this meter too; uploaded meter 2's pack
+  (`meter_core/build/voice.bin`, 466 clips, 4.8 MB), droid on, `@wake/yes` → R1 chirp
+  (HTTP 200). User: R2 look on the device "all good" (colours confirmed by eye).
 
 
 ### 2026-10-03 (Mac, ~10:15) — lessons to DEV_KIT
