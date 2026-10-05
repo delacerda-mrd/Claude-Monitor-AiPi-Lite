@@ -35,7 +35,7 @@ board contract). Host scripts (`push_claude_token.py`, `notify_listener.py`,
 | ◆ `settings.c` | NVS settings + token (namespace `cfg`, token key unchanged from v1) |
 | ◆ `audio.c` | ES8311 + tones; async queue (melodies + speech jobs), streaming API, volume |
 | ◆ `voice.c` | speech: clip-pack index from the `voice` partition, script → clips, µ-law streaming |
-| ◆ `listen.c` | "Jarvis": mic → esp-sr AFE/WakeNet/MultiNet, command actions, hands misses to the brain |
+| ◆ `listen.c` | wake word ("Computer" on this board): mic → esp-sr AFE/WakeNet/MultiNet, command actions, hands misses to the brain |
 | ◆ `brain.c` | unmatched speech → `brain_server.py` on the Mac, plays the answer, runs its action |
 | ◆ `app.h` | shared types: `g_sys`, boot stages, thresholds, the `app_say*` sound-policy API |
 | `fonts/` | JetBrains Mono (OFL, generated) + Styrene (from HY3, patched for LVGL 8) |
@@ -56,7 +56,8 @@ board contract). Host scripts (`push_claude_token.py`, `notify_listener.py`,
    if NVS is empty), PM 40–160 MHz (**light sleep OFF**).
 2. LED dim blue, backlight 0, display + LVGL, **splash** painted while dark, then the
    backlight fades in (450 ms). Audio init, net task started.
-3. Splash shows Clawd + stage: joining wi-fi → syncing clock → fetching usage. It
+3. Splash shows R2-D2 (`CLAWD_R2_IDLE`, dome swivels in `CLAWD_R2_THINK` once fetching;
+   art in `tools/r2_pix.py`, user 2026-10-05) + stage: joining wi-fi → syncing clock → fetching usage. It
    hands over to the RINGS page once the first poll finishes (≥1.8 s, ≤30 s), or to the
    **setup screen** if there is no network.
 
@@ -118,9 +119,9 @@ red down) · bolt while charging / plug when on USB and full · battery (white; 
 
 | Page | Content |
 |------|---------|
-| **COMMAND** (home, RINGS request) | 31-tick 280° meter for 5 h (lit ticks blue → white along the scale, majors every 20 %) over a glow band that **breathes** (~4 s, 1.6 s when critical; 100 ms timer, only while this page is on a lit screen); inner 280° arc for 7 d; "5H" caption, count-up session %, `T-` countdown (or `token?`/`offline`); status word in the gap: NOMINAL / ELEVATED / CRITICAL / LOCKED (worse window), STALE, ACQUIRING / NO SIGNAL; bottom: 7D % and 7 d `T-` reset |
-| **PACE** | A panel per window (5H, 7D): verdict (`+12 AHEAD` / `ON PACE` / `8 UNDER`), %, `T-` reset, 23-segment tape with the **even-pace marker**, burn rate (`%/h`, `%/d`), `LIM 2h10m` if on course to cap before reset, else `CLEAR` (`LOCKED` at 100 %) |
-| **TREND** | 5 h chart (session in blue with fill, weekly dim), 100 % cap line in blue, 25/50/75 grid; `T-` countdown; tiles NOW / PROJ (% at reset at this rate) / LIMIT (clock time of 100 %, or CLEAR / LOCK) |
+| **COMMAND** (home, RINGS request) | 31-tick 280° meter for 5 h (lit ticks blue → white along the scale, majors every 20 %) over a glow band that **breathes** (~4 s, 1.6 s when critical; 100 ms timer, only while this page is on a lit screen); inner 280° arc for 7 d; gauge centred in the body (cy 71); count-up session % (JetBrains Mono Bold 26), session reset countdown `4h38m` (or `token?`/`offline`), 7 d reset countdown `1d0h`, then the status word in the gap: NOMINAL / ELEVATED / CRITICAL / LOCKED (worse window), STALE, ACQUIRING / NO SIGNAL. From `BOARD_DANGER_PCT` (92) session % (below 100 on both windows) the status reads **`WRAP UP 93%`** and the big number turns red with the ring. 2026-10-05 (user): no "5H" caption, no `T-` prefix, no bottom 7D row (7 d % is the inner arc only) |
+| **PACE** | A panel per window (5H, 7D): verdict (`+12 AHEAD` / `ON PACE` / `8 UNDER`), %, reset countdown, 23-segment tape with the **even-pace marker**, burn rate (`%/h`, `%/d`), `LIM 2h10m` if on course to cap before reset, else `CLEAR` (`LOCKED` at 100 %) |
+| **TREND** | 5 h chart (session in blue with fill, weekly dim), 100 % cap line in blue, 25/50/75 grid; reset countdown; tiles NOW / PROJ (% at reset at this rate) / LIMIT (clock time of 100 %, or CLEAR / LOCK) |
 | **CLAWD** | Clawd as a **blue hologram** (`clawd_set_holo()`: each colour's brightness in holo blue) on a holo-pad (corner brackets + scan lines); moods as before: dance-sway "All clear" (<25 %), coding "Cooking", thinking "Pace yourself" (≥60), surprise "Whoa there" (≥85), sleep "Rate limited", look-around "Need a token"/"Offline", bounce "Fresh window!" |
 | **SYSTEMS** | Readout panel: NET dB, BAT (`+` on USB), MEM (internal RAM free), CPU (die °C, red ≥ 70), API/HDR + age of last good poll, TOK OK/NO, UP, FW; dashboard QR; signal bars; IP |
 
@@ -156,9 +157,10 @@ meters still show it.
 Boot blue · green / amber / red by the worse window · red on error · **slow red
 breathe at ≥ 100 %** · **slow blue breathe in setup mode**.
 
-## Voice control (v2.2) — offline "Jarvis", brain on the Mac (v2.5)
+## Voice control (v2.2) — offline wake word "Computer", brain on the Mac (v2.5)
 `listen.c`: mic (ES8311 ADC, GPIO13, 16 kHz, 24 dB PGA) → feed task (core 0) → esp-sr AFE
-(VAD + WakeNet9 `wn9_jarvis_tts`) → detect task (core 1). On "Jarvis": "Yes?", LED
+(VAD + WakeNet9 `wn9_computer_tts`, was `wn9_jarvis_tts` until 2026-10-05; `listen.c`
+takes the first WakeNet model in the partition) → detect task (core 1). On "Computer": "Yes?", LED
 cyan, *Listening…* pill; MultiNet7 `mn7_en` gets an 8 s window for ~40 phrases (usage,
 reset, weekly, refresh, pace, pages, mute/unmute, volume, screen off, time, battery,
 who/thanks); the window also ends 1 s after speech stops (VAD). Unmatched speech →
@@ -167,7 +169,9 @@ runs when `listen` is on (default) — on USB power and, since v2.3, on battery 
 (`listen_batt`, default on; the mic + WakeNet keep the CPU awake, so it costs battery).
 A wake word turns a blanked screen back on.
 TX stays enabled while listening (S3 duplex RX is clocked by TX). Models: `model`
-partition @0xC00000 (USB flash writes srmodels.bin). Diagnostics: `/api/status`
+partition @0xC00000 (USB flash writes srmodels.bin; changing the wake word = edit
+`sdkconfig.defaults` **and** the generated `sdkconfig`, build, then esptool `write_flash
+0xc00000 build/srmodels/srmodels.bin` — OTA does not carry the model). Diagnostics: `/api/status`
 `listen` (state, last heard, mic dBFS), `GET /api/rec.wav` (last attempt's raw audio),
 `POST /api/say {"listen":true}` (skip the wake word).
 
@@ -232,6 +236,7 @@ and ends with 160 ms of silence (> the DMA ring) before the amp is cut.
 | Token rejected | "My token expired. Asking your Mac for a fresh one." (E–C) |
 | Network lost / back | "Connection lost." (E–C) / "Back online." |
 | Cross 60 % / 85 % | "Heads up. Session at 61 percent." / "Warning. Weekly at 87 percent." |
+| Session up 1 % at ≥ 92 % (`BOARD_DANGER_PCT`, <100) | R2's alarm `@r1_danger` (droid on; else the 85 % tone) — one per poll that rises, unless a bigger remark fires |
 | Cross 100 % | "You've hit the limit. Back in 1 hour 20 minutes." |
 | Window reset | "Fresh window. Usage reset." (C–E–G–C) |
 | Setup AP up | "Setup mode. Scan the code on my screen to connect." (G–D) |

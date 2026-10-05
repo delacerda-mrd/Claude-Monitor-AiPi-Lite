@@ -373,8 +373,8 @@ void app_main(void)
     if (audio_init() != ESP_OK)
         ESP_LOGW(TAG, "audio init failed - continuing without sound");
     voice_init();                   /* tones if no pack is installed */
-    brain_init();                   /* the Mac answers what Jarvis can't */
-    listen_init();                  /* "Jarvis" -- off if no models are flashed */
+    brain_init();                   /* the Mac answers what the meter can't */
+    listen_init();                  /* "Computer" -- off if no models are flashed */
     button_init();
     power_sample();
     net_start();

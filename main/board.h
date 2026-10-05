@@ -38,3 +38,7 @@
 #define BOARD_AUDIO_PA_ON_LEVEL  1          /* amp enable is active-high */
 #define BOARD_AUDIO_VOL_MAX      75         /* 100 % = 0 dB on the ES8311; above it is digital
                                                gain that clips (found on the ES3C28P 2026-10-04) */
+
+/* Session % from which the home page says "WRAP UP n%" in red and every 1 % rise
+ * plays R2's alarm (meter_core usage.c; user, 2026-10-05). */
+#define BOARD_DANGER_PCT         92

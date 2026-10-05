@@ -134,6 +134,13 @@ Verified via serial log, `/api/status` and `/api/screen.bmp` (exact panel input)
 - [x] Reminder notice: `/api/play` + `X-Text` shows bell + scrolling text; a button press dismisses it (screenshots)
 - [x] R2 colours on the glass, breathing glow, notice — user: "all good" (2026-10-05)
 - [x] Voice pack 466 clips with R1's droid sounds (user kept them as-is), droid wake chirp plays
+### 2026-10-05 (late): Computer, R2 splash, home v3, wrap-up alarm
+- [x] Model partition rewritten over USB with `wn9_computer_tts` (hash verified); listener back to idle after boot
+- [~] "Computer" wake word answers by voice: user to test
+- [~] R2-D2 splash (`CLAWD_R2_IDLE` / `CLAWD_R2_THINK`): user to watch the next reboot (it's gone before `/api/screen.bmp` finishes; art preview `docs/evidence/r2_splash_frames.png`)
+- [x] Home v3: no "5H", no `T-`, no bottom 7D row, gauge centred (cy 71), 26 px number, 7 d countdown above the status word (screenshot `docs/evidence/home_v3.png`)
+- [x] `WRAP UP 95%` in red + red number at ≥92 % (temporary build that forced 95 %; screenshot `docs/evidence/home_wrap_up_95_test.png`)
+- [~] R2 alarm (`@r1_danger`) on each 1 % rise ≥92 %: the 4 variants played on the speaker via `/api/play`; the real trigger is waiting for usage to get there
 ### Voice (v2.1)
 - [x] USB flash with the new partition table; token + Wi-Fi survived (NVS offset unchanged)
 - [x] `POST /voice` installs the Daniel pack (2.4 MB in 15 s): `voice pack "Daniel": 127 clips`

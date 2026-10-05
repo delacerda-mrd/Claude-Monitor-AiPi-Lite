@@ -37,8 +37,8 @@ CONFIG_SPIRAM_MODE_OCT=y
 CONFIG_SPIRAM_SPEED_80M=y
 CONFIG_SPIRAM_IGNORE_NOTFOUND=y
 
-# --- Speech recognition (esp-sr): "Jarvis" wake word + English commands ---
-CONFIG_SR_WN_WN9_JARVIS_TTS=y
+# --- Speech recognition (esp-sr): "Computer" wake word + English commands ---
+CONFIG_SR_WN_WN9_COMPUTER_TTS=y
 CONFIG_SR_MN_CN_NONE=y
 CONFIG_SR_MN_EN_MULTINET7_QUANT=y
 

@@ -1,7 +1,7 @@
 /*
  * ui.c  --  Claude Meter v2 interface for a 128x128 ST7735.
  *
- *   splash  : Clawd + boot stage, until the first poll lands
+ *   splash  : R2-D2 + boot stage, until the first poll lands
  *   setup   : Wi-Fi setup AP: join-QR + password (no network)
  *   pages   : COMMAND -> PACE -> TREND -> CLAWD -> SYSTEMS (short press cycles)
  *   top bar : clock . page ticks . sync spinner, Wi-Fi, charge, battery
@@ -36,13 +36,13 @@
 #include "settings.h"
 #include "usage.h"
 
-LV_FONT_DECLARE(font_jbm_bold_30);
+LV_FONT_DECLARE(font_jbm_bold_26);
 LV_FONT_DECLARE(font_jbm_bold_16);
 LV_FONT_DECLARE(font_jbm_medium_11);
 LV_FONT_DECLARE(font_styrene_12);
 LV_FONT_DECLARE(font_styrene_14);
 
-#define F_BIG    (&font_jbm_bold_30)    /* digits, % - only */
+#define F_BIG    (&font_jbm_bold_26)    /* digits, % - only */
 #define F_NUM    (&font_jbm_bold_16)    /* digits, % + - . : d h m s only */
 #define F_MONO   (&font_jbm_medium_11)
 #define F_SMALL  (&font_styrene_12)
@@ -183,11 +183,10 @@ static void fmt_reset(char *b, size_t n, time_t reset)
     else fmt_dur(b, n, (long)(reset - now));
 }
 
+/* Plain "4h38m" -- the "T-" prefix was dropped (user, 2026-10-05). */
 static void countdown(char *b, size_t n, time_t reset)
 {
-    char d[16];
-    fmt_reset(d, sizeof(d), reset);
-    snprintf(b, n, strcmp(d, "--") ? "T-%s" : "%s", d);
+    fmt_reset(b, n, reset);
 }
 
 /* Elapsed share of a window, from its reset time. false if unknown. */
@@ -561,13 +560,14 @@ static void lb_update(void)
 /* gap; 7 d value and its reset along the bottom.                      */
 /* ------------------------------------------------------------------ */
 #define G_CX    64
-#define G_CY    64
+#define G_CY    71      /* centred in the body (y 14..127) */
+#define WRAP_PCT BOARD_DANGER_PCT   /* "WRAP UP n%" in red from here (board.h) */
 #define G_D     92
 #define G_ROT   130
 #define G_SWEEP 280
 
 static struct {
-    lv_obj_t *meter, *glow, *week, *num, *pct, *sub, *threat, *w_val, *w_rst;
+    lv_obj_t *meter, *glow, *week, *num, *pct, *sub, *w_rst, *threat;
     lv_meter_indicator_t *lit;
     int shown, lit_val, level;
     lv_opa_t glow_opa;
@@ -632,10 +632,6 @@ static void command_build(lv_obj_t *s)
     s_r.week = mk_hud_arc(s, G_CX, G_CY, 66, 3, G_ROT, G_SWEEP, R_OFF, LV_OPA_COVER);
     lv_obj_set_style_arc_opa(s_r.week, LV_OPA_80, LV_PART_INDICATOR);
 
-    lv_obj_t *cap = caption(s, "5H", 0, 35);
-    lv_obj_set_width(cap, LCD_W);
-    lv_obj_set_style_text_align(cap, LV_TEXT_ALIGN_CENTER, 0);
-
     /* "42" + "%" as one centred row; flex re-centres as digits change.
      * Bottom-aligned, the % lifted by the fonts' descent difference. */
     lv_obj_t *pair = lv_obj_create(s);
@@ -644,21 +640,18 @@ static void command_build(lv_obj_t *s)
     lv_obj_set_flex_flow(pair, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(pair, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
     lv_obj_set_style_pad_column(pair, 1, 0);
-    lv_obj_set_pos(pair, 0, 48);
+    lv_obj_set_pos(pair, 0, G_CY - 13);
     s_r.num = mk_label(pair, F_BIG, R_TEXT, "--");
     s_r.pct = mk_label(pair, F_TITLE, R_BLUE, "%");
     lv_obj_set_style_pad_bottom(s_r.pct, F_BIG->base_line - F_TITLE->base_line, 0);
     s_r.shown = -1;
 
-    s_r.sub    = mk_centered(s, F_MONO, R_DIM, 0, LCD_W, 73);
-    s_r.threat = mk_centered(s, F_SMALL, R_CAPTION, 0, LCD_W, 100);
+    /* session countdown, then the 7 d reset right above the status word
+     * (the bottom 7D row is gone -- user, 2026-10-05) */
+    s_r.sub    = mk_centered(s, F_MONO, R_DIM, 0, LCD_W, G_CY + 9);
+    s_r.w_rst  = mk_centered(s, F_MONO, R_DIM, 0, LCD_W, G_CY + 23);
+    s_r.threat = mk_centered(s, F_SMALL, R_CAPTION, 0, LCD_W, G_CY + 36);
     lv_obj_set_style_text_letter_space(s_r.threat, 1, 0);
-
-    caption(s, "7D", 2, 113);
-    s_r.w_val = mk_label(s, F_MONO, R_TEXT, "--");
-    lv_obj_set_pos(s_r.w_val, 23, 115);
-    s_r.w_rst = mk_label(s, F_MONO, R_DIM, "--");
-    lv_obj_align(s_r.w_rst, LV_ALIGN_TOP_RIGHT, -2, 115);
 
     lv_timer_create(breathe_cb, 100, NULL);
 }
@@ -708,19 +701,25 @@ static void command_update(const usage_t *u, bool changed)
             lv_anim_start(&a);
             s_r.shown = u->session_pct;
         }
-        set_color(s_r.num, HEX(stale ? R_STALE : R_TEXT));
+        bool wrap = u->session_pct >= WRAP_PCT;
+        set_color(s_r.num, HEX(stale ? R_STALE : wrap ? R_RED : R_TEXT));
         set_color(s_r.pct, HEX(r2_level(u->session_pct)));
 
         int worst = u->session_pct > u->weekly_pct ? u->session_pct : u->weekly_pct;
         s_r.level = worst >= 100 ? 3 : worst >= USAGE_RED_PCT ? 2 : worst >= USAGE_AMBER_PCT ? 1 : 0;
         static const char *const word[] = { "NOMINAL", "ELEVATED", "CRITICAL", "LOCKED" };
         static const uint32_t wcol[] = { R_CAPTION, R_PALE, R_RED, R_RED };
-        set_text(s_r.threat, stale ? "STALE" : word[s_r.level]);
-        set_color(s_r.threat, HEX(stale ? R_STALE : wcol[s_r.level]));
-
-        snprintf(b, sizeof(b), "%d%%", u->weekly_pct);
-        set_text(s_r.w_val, b);
-        set_color(s_r.w_val, HEX(stale ? R_STALE : u->weekly_pct >= USAGE_AMBER_PCT ? r2_level(u->weekly_pct) : R_TEXT));
+        if (wrap && !stale && s_r.level < 3) {
+            /* <100 % on both: tell me to wrap up, in the ring's red */
+            snprintf(b, sizeof(b), "WRAP UP %d%%", u->session_pct);
+            set_text(s_r.threat, b);
+            set_color(s_r.threat, HEX(R_RED));
+            lv_obj_set_style_text_letter_space(s_r.threat, 0, 0);
+        } else {
+            set_text(s_r.threat, stale ? "STALE" : word[s_r.level]);
+            set_color(s_r.threat, HEX(stale ? R_STALE : wcol[s_r.level]));
+            lv_obj_set_style_text_letter_space(s_r.threat, 1, 0);
+        }
     }
     if (!u->have_data) {
         set_text(s_r.threat, u->err == POLL_OK ? "ACQUIRING" : "NO SIGNAL");
@@ -1121,7 +1120,7 @@ static void splash_build(void)
     s_s.clawd = clawd_create(s_s.scr, 4, HEX(C_BG));
     if (s_s.clawd) {
         lv_obj_align(s_s.clawd, LV_ALIGN_TOP_MID, 0, 6);
-        clawd_play(s_s.clawd, CLAWD_IDLE_BLINK);
+        clawd_play(s_s.clawd, CLAWD_R2_IDLE);     /* R2 on the splash (user, 2026-10-05) */
     }
     lv_obj_t *t = mk_label(s_s.scr, F_TITLE, C_TEXT, "Claude Meter");
     lv_obj_align(t, LV_ALIGN_TOP_MID, 0, 90);
@@ -1144,7 +1143,7 @@ static void splash_update(void)
     set_text(s_s.status, t);
     lv_obj_align(s_s.status, LV_ALIGN_TOP_MID, 0, 110);
     if (s_s.clawd)
-        clawd_play(s_s.clawd, g_sys.boot >= BOOT_FETCH ? CLAWD_THINK : CLAWD_IDLE_BLINK);
+        clawd_play(s_s.clawd, g_sys.boot >= BOOT_FETCH ? CLAWD_R2_THINK : CLAWD_R2_IDLE);
 }
 
 static void setup_show(void)

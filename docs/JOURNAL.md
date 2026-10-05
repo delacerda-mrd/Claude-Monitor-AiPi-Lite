@@ -8,15 +8,14 @@
 
 ## Current Status (updated 2026-10-05)
 
-**Phase:** **R2-D2 cockpit deployed** (fw 2.5.0 + today's meter_core `90f3c9a`, OTA'd and
-valid 2026-10-05 01:15). This session ported the ES3C28P's updates: the shared core
-(whole-sentence speech via the Mac, reminders over `POST /api/play`, droid-sound support,
-mic timeout fix `c04e994`), the cockpit layout recoloured **R2-D2** at the user's request,
-the reminder notice, `BOARD_AUDIO_VOL_MAX 75`, LVGL heap + Clawd canvas in PSRAM
-(internal free 24.8 → **54.8 KB**), die temperature. Screens: `docs/evidence/r2_cockpit.png`.
-**Voice pack updated** to meter 2's (466 clips, R1's droid sounds; user: "use them as is,
-they are good as they are"). User confirmed the R2 look on the glass: "all good" — so the
-`LV_COLOR_16_SWAP` colours are right by eye too.
+**Phase:** **Personalised R2 meter** (2026-10-05 ~02:10, fw 2.5.0 + meter_core `7422be2`, OTA valid
+on ota_1). This session: wake word **"Computer"** (`wn9_computer_tts`,
+model partition rewritten over USB); **R2-D2 splash** (pixel art `tools/r2_pix.py`, dome swivels
+while fetching); **home v3** (no "5H", no `T-`, no bottom 7D row, gauge centred, 26 px number,
+7 d countdown above the status word); **≥92 % session → `WRAP UP n%` in red + red number**, and
+**R2's alarm `@r1_danger`** on each 1 % rise (core `BOARD_DANGER_PCT`, AiPi = 92). Screens:
+`docs/evidence/home_v3.png`, `home_wrap_up_95_test.png`. Earlier today: the R2-D2 cockpit port
+(see the 01:00 entry), user confirmed the look on the glass.
 
 **Brain on the Mac** works end to end by voice (2026-10-03): whisper.cpp small.en →
 `claude -p` → reply in the meter's voice (~5–7 s); now also web lookups and reminders.
@@ -27,7 +26,9 @@ firmware + all host tools live in the sibling repo `../meter_core`
 repo. launchd agents run from meter_core. The ES3C28P meter (`../Claude_Meter_ES3C28P`,
 `claude-meter-2.local`) is live with an Imperial look; this one is the R2.
 
-**Open:** user verdict on wit/tone over a day; "Jarvis" on battery; brain actions by
+**Open:** "Computer" by voice (user to test); R2 splash by eye on the next reboot; the alarm
+firing for real at ≥92 %; voice pack with `r1_danger` (if the wrap didn't upload it, see the
+entry); user verdict on wit/tone over a day; wake word on battery; brain actions by
 voice; button feel; 24 h soak. *Resolved 2026-10-05:* internal RAM (now ~54 KB free, LVGL
 in PSRAM); token push reaches every meter (core `8d60839`).
 
@@ -37,8 +38,9 @@ in PSRAM); token push reaches every meter (core `8d60839`).
 starved MultiNet. The PGA/NS/AGC suspects were never needed; the `/api/rec.wav` capture
 remains the first tool if misses come back.
 
-**Resume here:** nothing pending on voice. Open items below (button feel, 24 h soak,
-battery-mode checks) or new features.
+**Resume here:** ask the user how "Computer", the R2 splash and (once usage passes 92 %)
+the alarm went; confirm the voice pack on the meter has `r1_danger` (`/api/status` voice
+clips > 466). Then the open items (button feel, 24 h soak, battery-mode checks).
 
 **Known working (verified on hardware 2026-10-02):** v2 boots without `secrets.h`
 (Wi-Fi from NVS), token-free `/api/oauth/usage` polling, 429 → header fallback, Mac
@@ -70,6 +72,37 @@ min ~91–100 KB (59 KB under a screenshot burst). Details: BRINGUP Phase 7.
 ---
 
 ## Session Log (newest first)
+
+### 2026-10-05 (Mac, ~01:30–02:15) — Computer, R2 splash, home v3, wrap-up alarm
+- **Wake word → "Computer".** esp-sr offers ~60 words (English: Computer, Alexa, Mycroft,
+  Sophia, Hey Buddy/Nova/Willow…, Hi ESP/Jason/Andy…, Hi WALL-E too); "R1" needs paid
+  training. `sdkconfig.defaults` **and** the generated `sdkconfig` edited (the WakeNet choice
+  is a multi-select of bools, so defaults never unset the old one; DEV_KIT E-54). Model partition
+  rewritten over USB (`write_flash 0xc00000 build/srmodels/srmodels.bin`, 3.05 MB, hash
+  verified). The first three tries died right after `Chip is ESP32-S3` with "device reports
+  readiness to read but returned no data": an orphaned `tools/serial_log.py` (PID 7750, from
+  04:11) held the port; killed it and the write went through (DEV_KIT E-53). `listen.c` log
+  line now says "wake word" (core). The ES3C28P stays on Jarvis; the brain persona stays JARVIS.
+- **R2-D2 splash.** User: Clawd on the boot screen should be an R2 unit. `tools/r2_pix.py`
+  draws R2 at 20×20 in claudepix shape; `gen_clawd.py` appends `CLAWD_R2_IDLE` (logic light
+  red/blue, lens glint) and `CLAWD_R2_THINK` (dome swivels by rotating the dome band strip);
+  splash uses them, the Clawd page is unchanged. Not seen on the glass: the splash is gone
+  before a `/api/screen.bmp` grab finishes (burst attempt got 0 frames).
+- **Home v3** (user, in steps): "5H" caption removed; `T-` dropped from every countdown
+  (`countdown()` now plain); bottom 7D % + reset row removed; the 7 d reset sits above the
+  status word; gauge centre 64 → 71 (body centre); big number JetBrains Mono Bold 30 → 26 px
+  (TTF fetched from the JetBrains repo, regenerating the 30 px file was byte-identical, so same
+  source). Screenshot verified.
+- **Wrap-up at ≥92 %.** Status reads `WRAP UP 93%` in red (letter spacing 0 so it fits the gap)
+  and the big number goes red, while both windows are <100 %. Checked with a temporary build
+  forcing session 95 % (screenshot), then the real build OTA'd.
+- **R2 alarm.** New droid syllable `alarm` (fast two-tone siren f×1.5↔f×2.4, 4 cycles, shrill
+  trill) and category `r1_danger` (4 words, base 1400 Hz) in `meter_core/tools/droid.py`;
+  `usage.c` plays `@r1_danger/q_r1_warn_00` on each poll where session % rose and is ≥
+  `BOARD_DANGER_PCT` (<100), as the poll's one remark (limit / 85 % warning win). Unset on the
+  ES3C28P. The four clips were played on the speaker via `/api/play` (twice at the user's ask).
+  Voice pack rebuilt with `make_voice.py` (defaults) for upload.
+- Both boards build after each core change. OTA valid each time.
 
 ### 2026-10-05 (Mac) — wrap
 Session total: ES3C28P updates ported (core `90f3c9a`), R2-D2 cockpit, reminder notice,
