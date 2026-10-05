@@ -9,6 +9,7 @@ void ui_button_short(void);     /* next page                                    
 void ui_button_prev(void);      /* previous page (left button)                   */
 void ui_goodbye(void);          /* paint a power-off screen (main loop)          */
 void ui_button_long(void);      /* refresh feedback                              */
+void ui_input(void);            /* any button press (dismisses a reminder notice) */
 int  ui_page(void);
 
 /* Requests from other tasks (voice commands), consumed by ui_tick(). */

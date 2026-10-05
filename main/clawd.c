@@ -16,6 +16,8 @@ typedef struct {
     lv_timer_t     *timer;
     lv_color_t     *buf;
     lv_color_t      bg;
+    lv_color_t      tint;
+    bool            holo;           /* draw as a hologram in `tint` */
     int             scale;
     clawd_anim_id_t anim;
     int             frame;
@@ -26,8 +28,15 @@ static void draw_frame(clawd_t *c)
     const clawd_anim_t *a = &clawd_anims[c->anim];
     const uint8_t *f = a->frames[c->frame];
     lv_color_t pal[16];
-    for (int i = 0; i < a->ncolors && i < 16; i++)
-        pal[i] = i == 0 ? c->bg : lv_color_hex(a->palette[i]);
+    for (int i = 0; i < a->ncolors && i < 16; i++) {
+        uint32_t h = a->palette[i];
+        if (i == 0) { pal[i] = c->bg; continue; }
+        if (!c->holo) { pal[i] = lv_color_hex(h); continue; }
+        /* hologram: brightness of the original colour, in the tint */
+        int lum = (299 * (int)(h >> 16) + 587 * (int)((h >> 8) & 0xFF) + 114 * (int)(h & 0xFF)) / 1000;
+        lum = lum * 7 / 4;
+        pal[i] = lv_color_mix(c->tint, c->bg, (uint8_t)(lum > 255 ? 255 : lum));
+    }
 
     const int s = c->scale, W = CLAWD_GRID * s;
     for (int cy = 0; cy < CLAWD_GRID; cy++) {
@@ -48,7 +57,8 @@ static void tick_cb(lv_timer_t *t)
 {
     clawd_t *c = t->user_data;
     const clawd_anim_t *a = &clawd_anims[c->anim];
-    if (screen_is_on()) {
+    /* Only animate on the visible screen (the ES3C28P's WI-13 review). */
+    if (screen_is_on() && lv_obj_get_screen(c->canvas) == lv_scr_act()) {
         c->frame = (c->frame + 1) % a->nframes;
         draw_frame(c);
     }
@@ -69,7 +79,7 @@ lv_obj_t *clawd_create(lv_obj_t *parent, int scale, lv_color_t bg)
     clawd_t *c = calloc(1, sizeof(*c));
     if (!c) return NULL;
     int W = CLAWD_GRID * scale;
-    c->buf = heap_caps_malloc(LV_CANVAS_BUF_SIZE_TRUE_COLOR(W, W), MALLOC_CAP_INTERNAL);
+    c->buf = heap_caps_malloc(LV_CANVAS_BUF_SIZE_TRUE_COLOR(W, W), MALLOC_CAP_SPIRAM);   /* 12.8 KB: spare internal RAM */
     if (!c->buf) { free(c); return NULL; }
     c->scale = scale;
     c->bg = bg;
@@ -93,4 +103,14 @@ void clawd_play(lv_obj_t *obj, clawd_anim_id_t id)
     draw_frame(c);
     lv_timer_set_period(c->timer, clawd_anims[id].holds[0]);
     lv_timer_reset(c->timer);
+}
+
+void clawd_set_holo(lv_obj_t *obj, lv_color_t tint)
+{
+    if (!obj) return;
+    clawd_t *c = lv_obj_get_user_data(obj);
+    if (!c) return;
+    c->holo = true;
+    c->tint = tint;
+    draw_frame(c);
 }

@@ -13,6 +13,7 @@
 void power_init(void);          /* ADC + backlight PWM; call before UI     */
 void power_sample(void);        /* poll task: refresh g_sys.batt/ext_power */
 void power_eval(void);          /* poll task: cheap re-check of USB state  */
+int  power_temp_c(void);        /* ESP32-S3 die temperature, INT32_MIN if unavailable */
 
 void screen_init(esp_lcd_panel_handle_t panel);
 void screen_tick(void);         /* main loop: idle timeout + brightness    */

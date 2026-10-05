@@ -16,6 +16,8 @@
 #include "driver/gpio.h"
 #include "driver/ledc.h"
 #include "esp_adc/adc_oneshot.h"
+#include "driver/temperature_sensor.h"
+#include <stdint.h>
 
 #include "app.h"
 #include "board.h"
@@ -28,6 +30,16 @@ static const char *TAG = "power";
 /* ------------------------------------------------------------------ */
 static adc_oneshot_unit_handle_t s_adc;
 static int  s_avg;
+
+/* Die temperature for the SYSTEMS page (internal sensor, -10..80 C range). */
+static temperature_sensor_handle_t s_tsens;
+
+int power_temp_c(void)
+{
+    float c;
+    if (!s_tsens || temperature_sensor_get_celsius(s_tsens, &c) != ESP_OK) return INT32_MIN;
+    return (int)(c + (c >= 0 ? 0.5f : -0.5f));
+}
 
 void power_init(void)
 {
@@ -74,6 +86,12 @@ void power_init(void)
         .hpoint     = 0,
     };
     ESP_ERROR_CHECK(ledc_channel_config(&chn));
+
+    temperature_sensor_config_t tc = TEMPERATURE_SENSOR_CONFIG_DEFAULT(-10, 80);
+    if (temperature_sensor_install(&tc, &s_tsens) != ESP_OK || temperature_sensor_enable(s_tsens) != ESP_OK) {
+        ESP_LOGW(TAG, "die temperature sensor unavailable");
+        s_tsens = NULL;
+    }
 }
 
 static void batt_update(void)

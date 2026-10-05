@@ -105,21 +105,33 @@ board contract). Host scripts (`push_claude_token.py`, `notify_listener.py`,
   systemd on Linux (`host/linux/`).
 
 ## Screen (128×128) — pages cycle with a tap
-Top bar (on `lv_layer_top`, fixed while pages slide): clock · page dots (active =
-coral pill) · sync spinner (while polling) · Wi-Fi (amber < −78 dBm, red down) ·
-bolt while charging / plug when on USB and full · battery (white; amber ≤30 %, red ≤15 %,
-green while charging).
+**Look: R2-D2 (user, 2026-10-05).** The ES3C28P's cockpit layout (gauge, segmented
+"targeting tapes", HUD panels with corner notches, holo-pad) scaled to 128 px and
+recoloured: white data, R2 blue (nominal/accents), pale blue (elevated), R2's red logic
+light (critical), dome silver for secondary text. Severity thresholds unchanged
+(< 60 % ≤ elevated < 85 % ≤ critical). Splash, setup and goodbye keep the Anthropic palette.
+
+Top bar (on `lv_layer_top`, fixed while pages slide; 14 px, blue hairline): clock · 5
+page ticks (active = R2 blue) · sync spinner (while polling) · Wi-Fi (pale < −78 dBm,
+red down) · bolt while charging / plug when on USB and full · battery (white; pale
+≤30 %, red ≤15 %, blue while charging).
 
 | Page | Content |
 |------|---------|
-| **RINGS** (home) | Concentric rings — outer 5 h (r50), inner 7 d (r42), 6 px wide, centered (64,67), sized so the corner labels never sit on the outer ring — level-colored, tracks tinted; count-up session % in the middle (no caption) with its reset countdown (or `token?`/`offline`); corners: 7 d % and 7 d reset |
-| **PACE** | A card per window: %, bar with an **even-pace marker** (where usage would be if spent evenly), reset countdown, pace verdict (`+12 ahead` / `on pace` / `8 under`) |
-| **TREND** | 5 h chart of session (coral, gradient fill) + weekly (grey), live point at the right; projection `proj 87%` or, if on course to cap, `max @3:40` |
-| **CLAWD** | Clawd mood: dance-sway "All clear" (<25 %), coding "Cooking", thinking "Pace yourself" (≥60), surprise "Whoa there" (≥85), sleep "Rate limited" (≥100, with time to reset), look-around "Need a token"/"Offline", bounce "Fresh window!" after a reset |
-| **SYSTEM** | Wi-Fi RSSI, battery, uptime, fw, IP, data source + age, token host; QR of the dashboard URL |
+| **COMMAND** (home, RINGS request) | 31-tick 280° meter for 5 h (lit ticks blue → white along the scale, majors every 20 %) over a glow band that **breathes** (~4 s, 1.6 s when critical; 100 ms timer, only while this page is on a lit screen); inner 280° arc for 7 d; "5H" caption, count-up session %, `T-` countdown (or `token?`/`offline`); status word in the gap: NOMINAL / ELEVATED / CRITICAL / LOCKED (worse window), STALE, ACQUIRING / NO SIGNAL; bottom: 7D % and 7 d `T-` reset |
+| **PACE** | A panel per window (5H, 7D): verdict (`+12 AHEAD` / `ON PACE` / `8 UNDER`), %, `T-` reset, 23-segment tape with the **even-pace marker**, burn rate (`%/h`, `%/d`), `LIM 2h10m` if on course to cap before reset, else `CLEAR` (`LOCKED` at 100 %) |
+| **TREND** | 5 h chart (session in blue with fill, weekly dim), 100 % cap line in blue, 25/50/75 grid; `T-` countdown; tiles NOW / PROJ (% at reset at this rate) / LIMIT (clock time of 100 %, or CLEAR / LOCK) |
+| **CLAWD** | Clawd as a **blue hologram** (`clawd_set_holo()`: each colour's brightness in holo blue) on a holo-pad (corner brackets + scan lines); moods as before: dance-sway "All clear" (<25 %), coding "Cooking", thinking "Pace yourself" (≥60), surprise "Whoa there" (≥85), sleep "Rate limited", look-around "Need a token"/"Offline", bounce "Fresh window!" |
+| **SYSTEMS** | Readout panel: NET dB, BAT (`+` on USB), MEM (internal RAM free), CPU (die °C, red ≥ 70), API/HDR + age of last good poll, TOK OK/NO, UP, FW; dashboard QR; signal bars; IP |
 
-Non-home pages (except CLAWD, a "pet mode") return to RINGS after 60 s.
-Level colors: sage < 60 % ≤ amber < 85 % ≤ red. Palette = HY3 theme (Anthropic).
+Non-home pages (except CLAWD, a "pet mode") return to COMMAND after 60 s. Clawd only
+animates while its page is on screen.
+
+**Listening pill** (bottom, top layer): "Listening..." / "Thinking..." with a dot that
+flips blue ↔ red (R2's front logic light), then the heard text in pale blue for 2.5 s.
+**Reminder notice:** a `POST /api/play` with `X-Text` (meter_core reminders) shows a bell
++ the text, scrolling if long, until a button press after it arrived or 5 minutes. Muted
+meters still show it.
 
 ## Buttons (polled 10 ms, 30 ms debounce)
 - Screen off → any press only wakes it.
@@ -225,6 +237,10 @@ and ends with 160 ms of silence (> the DMA ring) before the amp is cut.
 | Setup AP up | "Setup mode. Scan the code on my screen to connect." (G–D) |
 | Hold the button | the full status (above); a C7 tick first |
 
+Volume 100 % = the ES8311's 0 dB (`BOARD_AUDIO_VOL_MAX 75`, 2026-10-05; above that the
+codec adds digital gain that clips). Shared-core speech since 2026-10-05: when the Mac's
+brain answers, multi-clip lines are spoken whole by the Mac (`/speak`), clips are the
+fallback; reminders arrive as `POST /api/play`; droid sounds need a pack with `@r1_*`.
 Routine polls stay silent. Settings: **Talk** (default on), volume (default 70), mute,
 quiet hours (off by default). **Quiet hours silence only unprompted announcements**;
 things you explicitly ask for — hold the button, "Say status", the volume test —
@@ -262,7 +278,10 @@ reset. USB flashes are never rolled back (recovery path).
   renders little-endian RGB565, the panel wants big-endian (DEV_KIT E-10 B). v1 lacked
   this and hand-scrambled its palette, which only works for saturated colors.
 - **PSRAM:** 8 MB octal (WROOM-1 N16R8), enabled since v2.1 → ~8.4 MB heap.
-- LVGL 8.4, memory from the system heap (`LV_MEM_CUSTOM`), 2 × 32-row draw buffers,
+- LVGL 8.4, memory from **PSRAM** (`LV_MEM_CUSTOM` + `main/lvgl_port/lv_mem_psram.h`,
+  allocator names set on the LVGL lib in the root `CMakeLists.txt`; from the ES3C28P,
+  2026-10-05 — before, its small allocations landed in internal RAM), Clawd canvases
+  in PSRAM too; internal free went 24.8 → 54.8 KB. Draw buffers: 2 × 32-row static arrays,
   flush released by the panel's DMA-done callback (`on_color_trans_done`), 20 ms
   refresh period.
 - mbedTLS dynamic buffers (`MBEDTLS_DYNAMIC_BUFFER` + free config/CA after handshake):

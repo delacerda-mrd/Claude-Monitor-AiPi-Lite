@@ -36,3 +36,5 @@
 #define BOARD_AUDIO_I2S_DIN      GPIO_NUM_13
 #define BOARD_AUDIO_PA_PIN       GPIO_NUM_9
 #define BOARD_AUDIO_PA_ON_LEVEL  1          /* amp enable is active-high */
+#define BOARD_AUDIO_VOL_MAX      75         /* 100 % = 0 dB on the ES8311; above it is digital
+                                               gain that clips (found on the ES3C28P 2026-10-04) */

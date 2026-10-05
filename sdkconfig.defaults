@@ -18,6 +18,8 @@ CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 CONFIG_LV_COLOR_16_SWAP=y
 # LVGL allocates from the system heap (no fixed 64 KB pool).
 CONFIG_LV_MEM_CUSTOM=y
+# ...in PSRAM (allocator names set in CMakeLists.txt; from the ES3C28P)
+CONFIG_LV_MEM_CUSTOM_INCLUDE="lv_mem_psram.h"
 CONFIG_LV_DISP_DEF_REFR_PERIOD=20
 CONFIG_LV_FONT_MONTSERRAT_10=y
 CONFIG_LV_USE_QRCODE=y

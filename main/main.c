@@ -248,6 +248,7 @@ static void button_poll(void)
     if (sim) {                                  /* remote press from the web API */
         g_btn_sim = 0;
         screen_wake();
+        ui_input();
         if (sim == 2) { usage_announce_next(); usage_poll_now(); app_sound_now(MELODY_BUTTON); ui_button_long(); }
         else          ui_button_short();
         return;
@@ -263,6 +264,7 @@ static void button_poll(void)
             long_fired = false;
             wake_only = !screen_is_on();
             screen_wake();
+            ui_input();
         } else if (!wake_only && !long_fired) {
             ui_button_short();
         }
@@ -299,6 +301,7 @@ static void button_left_poll(void)
             fired = false;
             wake_only = !screen_is_on();
             screen_wake();
+            ui_input();
         } else if (!wake_only && !fired) {
             ui_button_prev();
         }

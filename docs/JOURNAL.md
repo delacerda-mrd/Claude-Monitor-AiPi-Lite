@@ -6,26 +6,38 @@
 
 ---
 
-## Current Status (updated 2026-10-03)
+## Current Status (updated 2026-10-05)
 
-**Phase:** **v2.5 deployed** (fw 2.5.0, now built from `../meter_core` — OTA'd and
-valid 2026-10-03 09:55). **Brain on the Mac works end to end by voice** (user's own
-questions, brain log 01:49–01:51): whisper.cpp small.en → `claude -p` (sonnet, no tools,
-JARVIS persona, meter state, 10-min memory) → reply in the meter's voice (~5–7 s).
-v2.4 personality + lighter pitch deployed; v2.3 voice smoothing verified by ear.
+**Phase:** **R2-D2 cockpit deployed** (fw 2.5.0 + today's meter_core `90f3c9a`, OTA'd and
+valid 2026-10-05 01:15). This session ported the ES3C28P's updates: the shared core
+(whole-sentence speech via the Mac, reminders over `POST /api/play`, droid-sound support,
+mic timeout fix `c04e994`), the cockpit layout recoloured **R2-D2** at the user's request,
+the reminder notice, `BOARD_AUDIO_VOL_MAX 75`, LVGL heap + Clawd canvas in PSRAM
+(internal free 24.8 → **54.8 KB**), die temperature. Screens: `docs/evidence/r2_cockpit.png`.
+**Voice pack not yet updated** (still 435 clips): the current pack's droid sounds are R1's
+*evil* astromech; waiting on the user whether this R2 meter gets those or its own R2 set.
+
+**Brain on the Mac** works end to end by voice (2026-10-03): whisper.cpp small.en →
+`claude -p` → reply in the meter's voice (~5–7 s); now also web lookups and reminders.
 
 **Layout (since 2026-10-03):** this repo is the AiPi-Lite **board** half; the shared
 firmware + all host tools live in the sibling repo `../meter_core`
 (github.com/delacerda-mrd/meter_core, private) — it must be checked out next to this
-repo. launchd agents run from meter_core. The ES3C28P port starts fresh in
-`../Claude_Meter_ES3C28P` (only `BRIEF.md` so far; next step there: `/dev`).
+repo. launchd agents run from meter_core. The ES3C28P meter (`../Claude_Meter_ES3C28P`,
+`claude-meter-2.local`) is live with an Imperial look; this one is the R2.
 
 **Open:** user verdict on wit/tone over a day; "Jarvis" on battery; brain actions by
 voice; internal RAM free read 21.5 KB on the last boot (was 25–29 KB) — watch it;
 token push targets one meter only (multi-meter pass in meter_core before meter 2 goes
 online).
 
-**Resume here (voice tuning):** wake word ≈ 100 % (12/12). Commands hit ~4 of 9
+**Resume here:** (1) the user's call on the droid-sound set for this meter, then build +
+upload the voice pack; (2) the user's eye on the R2 look on the glass (colours via
+`LV_COLOR_16_SWAP` still not confirmed by eye). (3) Voice tuning below — retest first:
+core `c04e994` fixed the mic read timeout (200 ms had been 20 ms), which may explain the
+command misses.
+
+**Voice tuning (from 2026-10-03):** wake word ≈ 100 % (12/12). Commands hit ~4 of 9
 (p 0.14–0.23); misses log `no command (speech heard … peak −10 dBFS, best guess "")`.
 Suspects: clipping at 24 dB PGA with the user close, speaker/mic bleed, or no NS/AGC in
 the AFE pipeline (it runs VAD+WakeNet only). **Next step:** say a command, then
@@ -66,6 +78,27 @@ min ~91–100 KB (59 KB under a screenshot burst). Details: BRINGUP Phase 7.
 ---
 
 ## Session Log (newest first)
+
+### 2026-10-05 (Mac, ~01:00) — ES3C28P updates ported; R2-D2 cockpit
+User: "port all the updates from the Claude Meter ES3C28P", then mid-way: "this aipi lite
+is blue with white text. let's make this device R2 D2 themed."
+- **Core** (`ea90e86` → `90f3c9a`): came in by rebuilding; no board-contract gaps
+  (`BOARD_HOSTNAME`/`BOARD_SHOT_SCALE` defaults fit, `ui_page()` already existed).
+- **Board ports from the ES3C28P:** `BOARD_AUDIO_VOL_MAX 75` (same ES8311); LVGL allocator
+  → PSRAM (`main/lvgl_port/lv_mem_psram.h` + root CMakeLists; `sdkconfig` regenerated, the
+  only diff was `LV_MEM_CUSTOM_INCLUDE`); Clawd canvas → PSRAM and animates only when
+  visible; `power_temp_c()`; reminder notice in the pill (`ui_input()` from both buttons
+  dismisses it); page requests dropped before the pages exist.
+- **UI:** the ES3C28P cockpit (COMMAND gauge with breathing glow, PACE tapes, TREND tiles,
+  holo-pad, SYSTEMS readouts) re-laid out for 128 px and recoloured R2-D2 (white, R2 blue,
+  pale blue, R2's red logic light). Clawd is a blue hologram (`clawd_set_holo()`); the
+  listening dot flips blue/red like R2's PSI. Iterated from screenshots: 7D label spacing,
+  PACE titles 5-HOUR → 5H (collided with the verdict), TREND tile widths, SYSTEMS row pitch.
+- **HW (this unit):** three OTAs, valid; internal free 24.8 KB → 54.8 KB; all five pages
+  + the notice checked by screenshot; notice test via `/api/play` with a silent clip and
+  `X-Text`, dismissed by `/api/button`. App 2.87 MB, 9 % free.
+- **Not done:** voice pack upload (droid-set question to the user); colours by eye.
+
 
 ### 2026-10-03 (Mac, ~10:15) — lessons to DEV_KIT
 No firmware changes. Wrote this session's lessons to DEV_KIT (d3a6815): X-3 scripted
