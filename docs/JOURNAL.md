@@ -28,9 +28,8 @@ repo. launchd agents run from meter_core. The ES3C28P meter (`../Claude_Meter_ES
 `claude-meter-2.local`) is live with an Imperial look; this one is the R2.
 
 **Open:** user verdict on wit/tone over a day; "Jarvis" on battery; brain actions by
-voice; internal RAM free read 21.5 KB on the last boot (was 25–29 KB) — watch it;
-token push targets one meter only (multi-meter pass in meter_core before meter 2 goes
-online).
+voice; button feel; 24 h soak. *Resolved 2026-10-05:* internal RAM (now ~54 KB free, LVGL
+in PSRAM); token push reaches every meter (core `8d60839`).
 
 **Voice commands: fixed.** User retested after this session's core update (2026-10-05):
 "they all landed" (was ~4 of 9 on 2026-10-03). Cause: the mic read timeout bug, core
@@ -71,6 +70,12 @@ min ~91–100 KB (59 KB under a screenshot burst). Details: BRINGUP Phase 7.
 ---
 
 ## Session Log (newest first)
+
+### 2026-10-05 (Mac) — wrap
+Session total: ES3C28P updates ported (core `90f3c9a`), R2-D2 cockpit, reminder notice,
+VOL_MAX 75, LVGL in PSRAM (24.8 → 54.8 KB internal free), 466-clip pack with R1's droid
+sounds; user confirmed the look ("all good") and that voice commands now all land. Kit:
+E-52 (LVGL heap in PSRAM), E-50 extended (the voice-command symptom). Trees clean.
 
 ### 2026-10-05 (Mac, later) — voice commands all land
 User tried commands after the core update: "they all landed" (was ~4/9). Attributed to the
