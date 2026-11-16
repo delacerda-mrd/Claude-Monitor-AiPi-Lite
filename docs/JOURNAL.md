@@ -85,6 +85,9 @@ min ~91–100 KB (59 KB under a screenshot burst). Details: BRINGUP Phase 7.
 - Final build (0x2c22d0, 8 % free) by OTA ~22:10: valid on `ota_1`, usage live, foreign Origin 403 /
   same origin 200 / none 200, saved list `Death_Star_2G_EXT`. The ES3C28P went Imperial greyscale;
   **this meter keeps R2 blue** (user, 2026-11-15). Home screen unchanged by screenshot.
+- The shared brain now answers as a dark side Imperial astromech ("my lord"), and ~22:45 the voice
+  pack's quips were rebuilt to match and uploaded here too (user: both meters): 200 in 43 s, 470 clips,
+  no reboot. Wake word still "Computer". The look stays R2.
 
 ### 2026-10-05 (Mac, ~01:30–02:15) — Computer, R2 splash, home v3, wrap-up alarm
 - **Wake word → "Computer".** esp-sr offers ~60 words (English: Computer, Alexa, Mycroft,
