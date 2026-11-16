@@ -6,7 +6,10 @@
 
 ---
 
-## Current Status (updated 2026-10-05)
+## Current Status (updated 2026-11-15)
+
+**2026-11-15:** running meter_core's saved-networks + review-fix build (OTA `ota_1`, valid); R2 look
+kept. See the 2026-11-15 entry. Everything below is from 2026-10-05 and still holds.
 
 **Phase:** **Personalised R2 meter** (2026-10-05 ~02:10, fw 2.5.0 + meter_core `7422be2`, OTA valid
 on ota_1). This session: wake word **"Computer"** (`wn9_computer_tts`,
@@ -72,6 +75,16 @@ min ~91–100 KB (59 KB under a screenshot burst). Details: BRINGUP Phase 7.
 ---
 
 ## Session Log (newest first)
+
+### 2026-11-15 (ArcTrooper, from the ES3C28P session) — core update by OTA, look unchanged
+- meter_core changes from the ES3C28P session (journal there, 2026-11-15): **saved Wi-Fi networks**
+  (up to 8, dashboard Wi-Fi card: join / forget / add; boot and roaming pick any saved one in range),
+  cross-site POST guard, settings clamps, review fixes. No change to this repo's code.
+- First Wi-Fi build: USB `app-flash` wrote `ota_0` but the chip booted the old `ota_1` because
+  `otadata` pointed there (DEV_KIT E-57); went in by OTA instead.
+- Final build (0x2c22d0, 8 % free) by OTA ~22:10: valid on `ota_1`, usage live, foreign Origin 403 /
+  same origin 200 / none 200, saved list `Death_Star_2G_EXT`. The ES3C28P went Imperial greyscale;
+  **this meter keeps R2 blue** (user, 2026-11-15). Home screen unchanged by screenshot.
 
 ### 2026-10-05 (Mac, ~01:30–02:15) — Computer, R2 splash, home v3, wrap-up alarm
 - **Wake word → "Computer".** esp-sr offers ~60 words (English: Computer, Alexa, Mycroft,
